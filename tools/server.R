@@ -26,12 +26,14 @@ requiredPackages <- c("mcptools",
                       "keyring")
 missingPackages <- requiredPackages[!(requiredPackages %in% installed.packages()[,"Package"])]
 if(length(missingPackages) > 0) {
-  stop("Missing packages: ", paste(new.packages, collapse = ", "))
+  stop("Missing packages: ", paste(missingPackages, collapse = ", "))
 }
 
 library(dplyr)
 library(ellmer)
 library(mcptools)
+
+source("tools/conceptSetHelpers.R")
 
 connectionDetails <- DatabaseConnector::createConnectionDetails(
   dbms = "spark",
@@ -152,149 +154,12 @@ compileCaprViaWorker <- function(caprCode, timeoutSeconds = 60) {
   )
 }
 
-getCounts <- function(conceptSetSql) {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  sql <- "
-    WITH concept_set AS (
-      @concept_set_sql
-    ),
-    domain_persons AS (
-      SELECT DISTINCT
-        person_id,
-        'Condition' AS domain_id
-      FROM @cdm_database_schema.condition_occurrence
-      WHERE condition_concept_id IN (
-        SELECT concept_id
-        FROM concept_set
-      )
-       
-      UNION ALL
-       
-      SELECT DISTINCT
-        person_id,
-        'Procedure' AS domain_id
-      FROM @cdm_database_schema.procedure_occurrence
-      WHERE procedure_concept_id IN (
-       SELECT concept_id
-       FROM concept_set
-      )
-       
-      UNION ALL
-       
-      SELECT DISTINCT
-       person_id,
-        'Drug' AS domain_id
-      FROM @cdm_database_schema.drug_exposure
-      WHERE drug_concept_id IN (
-       SELECT concept_id
-       FROM concept_set
-      )
-       
-      UNION ALL
-       
-      SELECT DISTINCT
-       person_id,
-        'Measurement' AS domain_id
-      FROM @cdm_database_schema.measurement
-      WHERE measurement_concept_id IN (
-        SELECT concept_id
-        FROM concept_set
-      )
-       
-      UNION ALL
-       
-      SELECT DISTINCT
-       person_id,
-       'Observation' AS domain_id
-      FROM @cdm_database_schema.observation
-      WHERE observation_concept_id IN (
-        SELECT concept_id
-        FROM concept_set
-      )
-    )
-    SELECT
-      COUNT(DISTINCT CASE
-        WHEN domain_id = 'Condition' THEN person_id
-      END) AS condition_persons,
-       
-      COUNT(DISTINCT CASE
-        WHEN domain_id = 'Procedure' THEN person_id
-      END) AS procedure_persons,
-       
-      COUNT(DISTINCT CASE
-        WHEN domain_id = 'Drug' THEN person_id
-      END) AS drug_persons,
-       
-      COUNT(DISTINCT CASE
-        WHEN domain_id = 'Measurement' THEN person_id
-      END) AS measurement_persons,
-       
-      COUNT(DISTINCT CASE
-        WHEN domain_id = 'Observation' THEN person_id
-      END) AS observation_persons,
-       
-      COUNT(DISTINCT person_id) AS overall_persons
-      FROM domain_persons;
-  "
-  counts <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
-    sql = sql,
-    concept_set_sql = SqlRender::render(conceptSetSql, vocabulary_database_schema = cdmDatabaseSchema),
-    cdm_database_schema = cdmDatabaseSchema,
-    snakeCaseToCamelCase = TRUE
-  )
-  return(counts)
-}
-
-jsonToCaprWithReference <- function(json, target) {
-  expression <- CirceR::conceptSetExpressionFromJson(json)
-  concepts <- c()
-  excludedConcepts <- c()
-  includeDescendantConcept <- c()
-  includeDescendantAndExcludedConcept <- c()
-  conceptIds <- c()
-  conceptNames <- c()
-  for (item in expression$items) {
-    conceptId <- item$concept$conceptId$toString()
-    conceptName <- item$concept$conceptName
-    conceptIds <- c(conceptIds, conceptId)
-    conceptNames <- c(conceptNames, conceptName)
-    if (item$includeDescendants) {
-      if (item$isExcluded) {
-        includeDescendantAndExcludedConcept <- c(includeDescendantAndExcludedConcept, conceptId)
-      } else {
-        includeDescendantConcept <- c(includeDescendantConcept, conceptId)
-      } 
-    } else {
-      if (item$isExcluded) {
-        excludedConcepts <- c(excludedConcepts, conceptId)
-      } else {
-        concepts <- c(concepts, conceptId)
-      }
-    }
+getKeeperReferenceCohortId <- function(phenotype, connection) {
+  if (normalizeName(phenotype) != normalizeName("Acute liver failure")) {
+    stop("Currently only supporting Acute liver failure as phenotype")
   }
-  hasIncludeDescendants <- length(includeDescendantConcept) > 0 || length(includeDescendantAndExcludedConcept) > 0
-  code <- paste0("cs(",
-                 if (length(concepts) > 0) paste(concepts, collapse = ", ") else "",
-                 if (length(concepts) > 0 && hasIncludeDescendants) ", " else "",
-                 if (hasIncludeDescendants) "descendants(" else "",
-                 if (length(includeDescendantConcept) > 0) paste(includeDescendantConcept, collapse = ", ") else "",
-                 if (length(includeDescendantConcept) > 0 && length(includeDescendantAndExcludedConcept) > 0) ", " else "",
-                 if (length(includeDescendantAndExcludedConcept) > 0) paste0("exclude(", paste(includeDescendantAndExcludedConcept, collapse = ", "), ")") else "",
-                 if (hasIncludeDescendants) ")" else "",
-                 if ((length(concepts) > 0 || hasIncludeDescendants) && length(excludedConcepts) > 0) ", " else "",
-                 if (length(excludedConcepts) > 0) paste0("exclude(", paste(excludedConcepts, collapse = ", "), ")") else "",
-                 ", name = \"", 
-                 target, 
-                 "\")")
-  reference <- lapply(seq_along(conceptIds), 
-                      function(i) list(conceptId = as.integer(conceptIds[i]),
-                                       conceptName = conceptNames[i]))
-  reference <- jsonlite::toJSON(reference,
-                                auto_unbox  = TRUE)
-  reference <- as.character(reference)
-  return(tibble(capr = code, reference = reference))
+  # TODO: look up in reference cohort definition table:
+  return(1)
 }
 
 # Tool functions --------------------------------------------------------------------------------------------------------
@@ -443,7 +308,7 @@ getCohortCount <- function(cohortId) {
       connection = connection,
       sql = sql,
       cohort_database_schema = cohortDatabaseSchema,
-      table = getCohortTableNames(cohortTable)$cohortInclusionResultTable,
+      table = CohortGenerator::getCohortTableNames(cohortTable)$cohortInclusionResultTable,
       cohort_id = cohortId,
       snakeCaseToCamelCase = TRUE
     )
@@ -489,14 +354,16 @@ evaluateCohort <- function(cohortId, phenotype) {
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
   
+  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype, connection)
+  
   metrics <- Keeper::computeCohortOperatingCharacteristics(
     connection = connection,     
     cohortDatabaseSchema = cohortDatabaseSchema,
     cohortTable = cohortTable,
     cohortDefinitionId = cohortId,
     referenceCohortDatabaseSchema = referenceCohortDatabaseSchema,
-    referenceCohortTableNames = createReferenceCohortTableNames(referenceCohortTable),
-    referenceCohortDefinitionId = 1
+    referenceCohortTableNames = Keeper::createReferenceCohortTableNames(referenceCohortTable),
+    referenceCohortDefinitionId = referenceCohortDefinitionId
   )
   metrics <- metrics |>
     select("sensitivity",
@@ -511,6 +378,7 @@ evaluateCohort <- function(cohortId, phenotype) {
 }
 
 samplePatientProfile <- function(cohortId, phenotype, type) {
+
   type <- tolower(type)
   if (!type %in% c("tp", "fp", "tn", "fn")) {
     return("Error: type must have value 'TP', 'FP', 'TN', or 'FN'")
@@ -518,6 +386,8 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
   
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
+  
+  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype, connection)
   
   sql <- "
     SELECT CAST(subject_id AS VARCHAR) AS subject_id
@@ -607,7 +477,9 @@ createNewConceptSet <- function(name, description) {
   )
   json <- as.character(jsonlite::toJSON(results$conceptSet, auto_unbox = TRUE))
   sql <- CirceR::buildConceptSetQuery(json)
-  counts <- getCounts(sql)
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+  counts <- getCounts(sql, connection, cdmDatabaseSchema)
   capr <- jsonToCaprWithReference(json, name)
   result <- bind_cols(
     capr |>
