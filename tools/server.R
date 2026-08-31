@@ -312,7 +312,14 @@ getCohortCount <- function(cohortId) {
       cohort_id = cohortId,
       snakeCaseToCamelCase = TRUE
     )
-    
+    cohortInclusionStats <- DatabaseConnector::renderTranslateQuerySql(
+      connection = connection,
+      sql = sql,
+      cohort_database_schema = cohortDatabaseSchema,
+      table = CohortGenerator::getCohortTableNames(cohortTable)$cohortInclusionStatsTable,
+      cohort_id = cohortId,
+      snakeCaseToCamelCase = TRUE
+    )
     inclusionRules <- bind_rows(inclusionRules, 
                                 tibble(cohortDefinitionId = cohortId, 
                                        ruleSequence = -1,
@@ -320,9 +327,17 @@ getCohortCount <- function(cohortId) {
     counts <- CohortGenerator::computeCohortAttrition(inclusionResults, inclusionRules) |>
       filter(modeId == 0, cohortEntry == 0) |>
       right_join(inclusionRules, by = join_by(cohortDefinitionId, ruleSequence)) |>
+      select("ruleSequence", "name", incrementalPersons = "personCount")
+    
+    counts <- counts |>
+      left_join(cohortInclusionStats |>
+                  filter(modeId == 0) |>
+                  select("ruleSequence", marginalPerson = "personCount", "gainCount"),
+                by = join_by(ruleSequence)) |>
       mutate(ruleSequence  = ruleSequence + 1) |>
-      select(ruleSequence, name, personCount) |>
-      mutate(personCount = if_else(is.na(personCount), 0, personCount)) |>
+      mutate(incrementalPersons = if_else(is.na(incrementalPersons), 0, incrementalPersons),
+             marginalPerson = if_else(is.na(marginalPerson) & ruleSequence != 0, 0, marginalPerson),
+             gainCount = if_else(is.na(gainCount) & ruleSequence != 0, 0, gainCount)) |>
       arrange(ruleSequence)
   } else {
     sql <- "
@@ -560,8 +575,10 @@ generateCohortTool <- tool(
 
 getCohortCountTool <- tool(
   getCohortCount,
-  description = paste("Return cohort sizes.",
-                      "If the cohort has attrition rules, counts after applying each rule will be returned as well."),
+  description = paste("Returns cohort sizes. For cohorts with attrition rules, also returns the number of persons",
+                      "remaining after each rule is applied (incrementalPersons), the number of persons who satisfy",
+                      "both the initial event and the rule (marginalPersons), and the number of persons that would be",
+                      "added back if the rule were removed (gainCount)."),
   arguments = list(
     cohortId = type_integer("The cohort ID as returned by the `generate_cohort` tool.")
   )
