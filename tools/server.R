@@ -476,7 +476,59 @@ getDatabaseDescription <- function(databaseName) {
   return(databaseDescription)
 }
 
-countConceptSetPersonOverlap <- function(caprCode, cohortId) {
+countConceptSetPersonOverlap <- function(
+    caprCode,
+    cohortId,
+    timeWindows = list(
+      list(name = "Prior year", startDay = -365L, endDay = -31L),
+      list(name = "Prior month", startDay = -30L, endDay = -1L),
+      list(name = "Index date", startDay = 0L, endDay = 0L),
+      list(name = "Following month", startDay = 1L, endDay = 30L),
+      list(name = "Following year", startDay = 31L, endDay = 365L)
+    )) {
+  if (is.atomic(timeWindows) && length(timeWindows) > 0L) {
+    if (length(timeWindows) %% 3L != 0L) {
+      stop("Each time window must contain name, startDay, and endDay")
+    }
+    timeWindows <- lapply(seq.int(1L, length(timeWindows), by = 3L), function(fieldIndex) {
+      list(
+        name = as.character(timeWindows[[fieldIndex]]),
+        startDay = suppressWarnings(as.numeric(timeWindows[[fieldIndex + 1L]])),
+        endDay = suppressWarnings(as.numeric(timeWindows[[fieldIndex + 2L]]))
+      )
+    })
+  }
+  if (is.data.frame(timeWindows)) {
+    timeWindows <- lapply(seq_len(nrow(timeWindows)), function(rowIndex) {
+      as.list(timeWindows[rowIndex, , drop = FALSE])
+    })
+  }
+  if (!is.list(timeWindows) || length(timeWindows) < 1L) {
+    stop("timeWindows must contain at least one time window")
+  }
+  requiredWindowFields <- c("name", "startDay", "endDay")
+  if (any(!vapply(timeWindows, function(window) {
+    is.list(window) && all(requiredWindowFields %in% names(window))
+  }, logical(1)))) {
+    stop("Each time window must contain name, startDay, and endDay")
+  }
+  windowsToCount <- tibble(
+    inputOrder = seq_along(timeWindows),
+    name = vapply(timeWindows, `[[`, character(1), "name"),
+    startDay = vapply(timeWindows, `[[`, numeric(1), "startDay"),
+    endDay = vapply(timeWindows, `[[`, numeric(1), "endDay")
+  )
+  if (any(!nzchar(windowsToCount$name)) || anyDuplicated(windowsToCount$name)) {
+    stop("Each time window must have a non-empty, unique name")
+  }
+  if (any(!is.finite(windowsToCount$startDay)) ||
+      any(!is.finite(windowsToCount$endDay)) ||
+      any(windowsToCount$startDay != as.integer(windowsToCount$startDay)) ||
+      any(windowsToCount$endDay != as.integer(windowsToCount$endDay)) ||
+      any(windowsToCount$startDay > windowsToCount$endDay)) {
+    stop("Time window bounds must be finite integers with startDay less than or equal to endDay")
+  }
+
   compiledConceptSets <- compileCaprConceptSetsViaWorker(caprCode)
   conceptSetsToCount <- tibble(
     inputOrder = seq_along(compiledConceptSets),
@@ -500,18 +552,31 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
     ),
     collapse = " UNION ALL "
   )
+  requestedWindows <- paste(
+    sprintf(
+      "SELECT %d AS window_order, %s AS window_name, %d AS start_day, %d AS end_day",
+      windowsToCount$inputOrder,
+      quoteSqlString(windowsToCount$name),
+      as.integer(windowsToCount$startDay),
+      as.integer(windowsToCount$endDay)
+    ),
+    collapse = " UNION ALL "
+  )
   sql <- "
     WITH requested_concept_sets AS (
       @requested_concept_sets
     ),
-    cohort_persons AS (
-      SELECT DISTINCT subject_id AS person_id
+    requested_windows AS (
+      @requested_windows
+    ),
+    cohort_entries AS (
+      SELECT DISTINCT subject_id AS person_id, cohort_start_date
       FROM @cohort_database_schema.@cohort_table
       WHERE cohort_definition_id = @cohort_id
     ),
-    domain_persons AS (
+    domain_occurrences AS (
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Condition' AS domain_id
+        occurrence.condition_start_date AS occurrence_date, 'Condition' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
@@ -521,7 +586,7 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
       UNION ALL
 
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Procedure' AS domain_id
+        occurrence.procedure_date AS occurrence_date, 'Procedure' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
@@ -531,7 +596,7 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
       UNION ALL
 
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Drug' AS domain_id
+        occurrence.drug_exposure_start_date AS occurrence_date, 'Drug' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
@@ -541,7 +606,7 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
       UNION ALL
 
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Measurement' AS domain_id
+        occurrence.measurement_date AS occurrence_date, 'Measurement' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
@@ -551,7 +616,7 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
       UNION ALL
 
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Observation' AS domain_id
+        occurrence.observation_date AS occurrence_date, 'Observation' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
@@ -561,40 +626,83 @@ countConceptSetPersonOverlap <- function(caprCode, cohortId) {
       UNION ALL
 
       SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
-        'Visit' AS domain_id
+        occurrence.visit_start_date AS occurrence_date, 'Visit' AS domain_id
       FROM requested_concept_sets requested
       INNER JOIN @cohort_database_schema.@concept_set_table concept_set
         ON requested.concept_set_hash = concept_set.concept_set_hash
       INNER JOIN @cdm_database_schema.visit_occurrence occurrence
         ON concept_set.concept_id = occurrence.visit_concept_id
+    ),
+    population_counts AS (
+      SELECT concept_set_hash, domain_id, COUNT(DISTINCT person_id) AS person_count
+      FROM domain_occurrences
+      GROUP BY concept_set_hash, domain_id
+    ),
+    population_overall_counts AS (
+      SELECT concept_set_hash, COUNT(DISTINCT person_id) AS person_count
+      FROM domain_occurrences
+      GROUP BY concept_set_hash
+    ),
+    cohort_counts AS (
+      SELECT occurrence.concept_set_hash, window.window_order, occurrence.domain_id,
+        COUNT(DISTINCT occurrence.person_id) AS person_count
+      FROM domain_occurrences occurrence
+      INNER JOIN cohort_entries cohort
+        ON occurrence.person_id = cohort.person_id
+      CROSS JOIN requested_windows window
+      WHERE DATEDIFF(DAY, cohort.cohort_start_date, occurrence.occurrence_date)
+        BETWEEN window.start_day AND window.end_day
+      GROUP BY occurrence.concept_set_hash, window.window_order, occurrence.domain_id
+    ),
+    cohort_overall_counts AS (
+      SELECT occurrence.concept_set_hash, window.window_order,
+        COUNT(DISTINCT occurrence.person_id) AS person_count
+      FROM domain_occurrences occurrence
+      INNER JOIN cohort_entries cohort
+        ON occurrence.person_id = cohort.person_id
+      CROSS JOIN requested_windows window
+      WHERE DATEDIFF(DAY, cohort.cohort_start_date, occurrence.occurrence_date)
+        BETWEEN window.start_day AND window.end_day
+      GROUP BY occurrence.concept_set_hash, window.window_order
     )
     SELECT requested.concept_set_hash, requested.concept_set_name,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Condition' THEN domain.person_id END) AS condition_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Condition' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS condition_cohort_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Procedure' THEN domain.person_id END) AS procedure_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Procedure' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS procedure_cohort_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Drug' THEN domain.person_id END) AS drug_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Drug' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS drug_cohort_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Measurement' THEN domain.person_id END) AS measurement_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Measurement' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS measurement_cohort_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Observation' THEN domain.person_id END) AS observation_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Observation' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS observation_cohort_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Visit' THEN domain.person_id END) AS visit_persons,
-      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Visit' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS visit_cohort_persons,
-      COUNT(DISTINCT domain.person_id) AS overall_persons,
-      COUNT(DISTINCT CASE WHEN cohort.person_id IS NOT NULL THEN domain.person_id END) AS overall_cohort_persons
+      window.window_name, window.start_day, window.end_day,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Condition' THEN population.person_count END), 0) AS condition_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Condition' THEN cohort.person_count END), 0) AS condition_cohort_persons,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Procedure' THEN population.person_count END), 0) AS procedure_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Procedure' THEN cohort.person_count END), 0) AS procedure_cohort_persons,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Drug' THEN population.person_count END), 0) AS drug_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Drug' THEN cohort.person_count END), 0) AS drug_cohort_persons,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Measurement' THEN population.person_count END), 0) AS measurement_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Measurement' THEN cohort.person_count END), 0) AS measurement_cohort_persons,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Observation' THEN population.person_count END), 0) AS observation_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Observation' THEN cohort.person_count END), 0) AS observation_cohort_persons,
+      COALESCE(MAX(CASE WHEN population.domain_id = 'Visit' THEN population.person_count END), 0) AS visit_persons,
+      COALESCE(MAX(CASE WHEN cohort.domain_id = 'Visit' THEN cohort.person_count END), 0) AS visit_cohort_persons,
+      COALESCE(MAX(population_overall.person_count), 0) AS overall_persons,
+      COALESCE(MAX(cohort_overall.person_count), 0) AS overall_cohort_persons
     FROM requested_concept_sets requested
-    LEFT JOIN domain_persons domain
-      ON requested.concept_set_hash = domain.concept_set_hash
-    LEFT JOIN cohort_persons cohort
-      ON domain.person_id = cohort.person_id
-    GROUP BY requested.concept_set_hash, requested.concept_set_name, requested.input_order
-    ORDER BY requested.input_order;
+    CROSS JOIN requested_windows window
+    LEFT JOIN population_counts population
+      ON requested.concept_set_hash = population.concept_set_hash
+    LEFT JOIN cohort_counts cohort
+      ON requested.concept_set_hash = cohort.concept_set_hash
+        AND window.window_order = cohort.window_order
+        AND population.domain_id = cohort.domain_id
+    LEFT JOIN population_overall_counts population_overall
+      ON requested.concept_set_hash = population_overall.concept_set_hash
+    LEFT JOIN cohort_overall_counts cohort_overall
+      ON requested.concept_set_hash = cohort_overall.concept_set_hash
+        AND window.window_order = cohort_overall.window_order
+    GROUP BY requested.concept_set_hash, requested.concept_set_name, requested.input_order,
+      window.window_name, window.start_day, window.end_day, window.window_order
+    ORDER BY requested.input_order, window.window_order;
   "
   counts <- DatabaseConnector::renderTranslateQuerySql(
     connection = connection,
     sql = sql,
     requested_concept_sets = requestedConceptSets,
+    requested_windows = requestedWindows,
     cohort_database_schema = cohortDatabaseSchema,
     cohort_table = cohortTable,
     cohort_id = cohortId,
@@ -836,15 +944,29 @@ countConceptSetPersonOverlapTool <- tool(
   countConceptSetPersonOverlap,
   description = paste(
     "Instantiate one or more Capr concept sets and count distinct people with their concepts",
-    "in the general population and among people in a generated cohort. Returns per-domain",
-    "and overall counts. Instantiated concept sets are cached by hash for reuse."
+    "in the general population and within inclusive day windows relative to generated cohort",
+    "index dates. Returns per-domain and overall counts for each window. Instantiated concept",
+    "sets are cached by hash for reuse."
   ),
   arguments = list(
     caprCode = type_array(type_string(paste(
       "A standalone Capr cs(...) expression. Supply one or more expressions; include a",
       "name argument in each expression."
     ))),
-    cohortId = type_integer("The cohort ID as returned by the `generate_cohort` tool.")
+    cohortId = type_integer("The cohort ID as returned by the `generate_cohort` tool."),
+    timeWindows = type_array(
+      type_object(
+        "An inclusive time window relative to the cohort index date.",
+        name = type_string("A unique name for the window."),
+        startDay = type_integer("First included day relative to index; negative values are before index."),
+        endDay = type_integer("Last included day relative to index; positive values are after index.")
+      ),
+      description = paste(
+        "Time windows to count. Omit to use: prior year (-365 to -31), prior month",
+        "(-30 to -1), index date (0), following month (1 to 30), and following year (31 to 365)."
+      ),
+      required = FALSE
+    )
   )
 )
 
@@ -900,8 +1022,8 @@ mcp_server(
     convertCaprToJsonTool,
     generateCohortTool,
     evaluateCohortTool,
-    samplePatientProfileTool,
-    createNewConceptSetTool
+    samplePatientProfileTool
+    #createNewConceptSetTool
   ),
   session_tools = FALSE
 )
