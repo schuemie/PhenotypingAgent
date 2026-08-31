@@ -1,0 +1,16 @@
+{
+	"servers": {
+		"ohdsi_hecate": {
+			"url": "https://hecate.pantheon-hds.com/mcp/sse",
+			"type": "http"
+		},
+		"r-tools": {
+			"command": "Rscript",
+			"args": [
+				"--vanilla",
+				"tools/server.R"
+			]
+		}
+	},
+	"inputs": []
+}
