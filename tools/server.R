@@ -833,6 +833,100 @@ describeMeasurementValues <- function(caprCode) {
   return(jsonlite::toJSON(descriptives, auto_unbox = TRUE, pretty = TRUE, na = "null"))
 }
 
+computeIncidenceRate <- function(cohortId) {
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+
+  sql <- "
+    WITH first_entry AS (
+      SELECT subject_id AS person_id,
+        MIN(cohort_start_date) AS cohort_start_date
+      FROM @cohort_database_schema.@cohort_table
+      WHERE cohort_definition_id = @cohort_id
+      GROUP BY subject_id
+    ),
+    time_at_risk AS (
+      SELECT observation_period.person_id,
+        CASE
+          WHEN YEAR(observation_period.observation_period_start_date) - person.year_of_birth < 0 THEN 0
+          ELSE FLOOR((YEAR(observation_period.observation_period_start_date) - person.year_of_birth) / 10) * 10
+        END AS age_group_start,
+        CASE
+          WHEN person.gender_concept_id = 8507 THEN 'Male'
+          WHEN person.gender_concept_id = 8532 THEN 'Female'
+          ELSE 'Other or unknown'
+        END AS sex,
+        CASE
+          WHEN first_entry.cohort_start_date IS NULL THEN 0
+          WHEN first_entry.cohort_start_date < observation_period.observation_period_start_date THEN 0
+          WHEN first_entry.cohort_start_date > observation_period.observation_period_end_date THEN 0
+          ELSE 1
+        END AS event_count,
+        DATEDIFF(DAY, observation_period.observation_period_start_date,
+          CASE
+            WHEN first_entry.cohort_start_date IS NULL THEN observation_period.observation_period_end_date
+            WHEN first_entry.cohort_start_date < observation_period.observation_period_start_date THEN observation_period.observation_period_end_date
+            WHEN first_entry.cohort_start_date > observation_period.observation_period_end_date THEN observation_period.observation_period_end_date
+            ELSE first_entry.cohort_start_date
+          END) + 1 AS days_at_risk
+      FROM @cdm_database_schema.observation_period observation_period
+      INNER JOIN @cdm_database_schema.person person
+        ON observation_period.person_id = person.person_id
+      LEFT JOIN first_entry
+        ON observation_period.person_id = first_entry.person_id
+    )
+    SELECT 'Overall' AS stratum,
+      'Overall' AS stratum_name,
+      0 AS stratum_order,
+      COUNT(DISTINCT person_id) AS persons,
+      SUM(event_count) AS events,
+      SUM(days_at_risk) / 365.25 AS person_years
+    FROM time_at_risk
+
+    UNION ALL
+
+    SELECT 'Age' AS stratum,
+      CONCAT(CAST(age_group_start AS VARCHAR), '-', CAST(age_group_start + 9 AS VARCHAR)) AS stratum_name,
+      age_group_start AS stratum_order,
+      COUNT(DISTINCT person_id) AS persons,
+      SUM(event_count) AS events,
+      SUM(days_at_risk) / 365.25 AS person_years
+    FROM time_at_risk
+    GROUP BY age_group_start
+
+    UNION ALL
+
+    SELECT 'Sex' AS stratum,
+      sex AS stratum_name,
+      0 AS stratum_order,
+      COUNT(DISTINCT person_id) AS persons,
+      SUM(event_count) AS events,
+      SUM(days_at_risk) / 365.25 AS person_years
+    FROM time_at_risk
+    GROUP BY sex
+    ORDER BY stratum, stratum_order, stratum_name;
+  "
+  rates <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    cohort_database_schema = cohortDatabaseSchema,
+    cohort_table = cohortTable,
+    cohort_id = cohortId,
+    cdm_database_schema = cdmDatabaseSchema,
+    snakeCaseToCamelCase = TRUE
+  )
+  if (nrow(rates) == 0) {
+    return("No observation time found in the database")
+  }
+  rates <- rates |>
+    mutate(incidenceRatePer1000PersonYears = if_else(personYears > 0,
+                                                     1000 * events / personYears,
+                                                     NA_real_),
+           database = databaseName) |>
+    select(-"stratumOrder")
+  return(jsonlite::toJSON(rates, auto_unbox = TRUE, pretty = TRUE, na = "null"))
+}
+
 evaluateCohort <- function(cohortId, phenotype) {
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
@@ -1107,6 +1201,21 @@ describeMeasurementValuesTool <- tool(
   )
 )
 
+computeIncidenceRateTool <- tool(
+  computeIncidenceRate,
+  description = paste(
+    "Compute a simple incidence rate for a generated cohort across the entire database population.",
+    "Only the first cohort entry per person is counted as an event, and person-time runs from the",
+    "start of each observation period until the event or the end of the observation period.",
+    "Returns persons, events, person-years, and the incidence rate per 1,000 person-years overall,",
+    "stratified by 10-year age group (age at observation period start), and stratified by sex.",
+    "Age and sex strata are computed separately, not crossed."
+  ),
+  arguments = list(
+    cohortId = type_integer("The cohort ID as returned by the `generate_cohort` tool.")
+  )
+)
+
 evaluateCohortTool <- tool(
   evaluateCohort,
   description = paste(
@@ -1156,6 +1265,7 @@ mcp_server(
     getDatabaseDescriptionTool,
     countConceptSetPersonOverlapTool,
     describeMeasurementValuesTool,
+    computeIncidenceRateTool,
     validateCaprTool,
     convertCaprToJsonTool,
     generateCohortTool,
