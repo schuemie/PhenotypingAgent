@@ -713,6 +713,126 @@ countConceptSetPersonOverlap <- function(
   return(jsonlite::toJSON(counts, auto_unbox = TRUE, pretty = TRUE))
 }
 
+describeMeasurementValues <- function(caprCode) {
+  compiledConceptSets <- compileCaprConceptSetsViaWorker(caprCode)
+  conceptSetsToDescribe <- tibble(
+    inputOrder = seq_along(compiledConceptSets),
+    name = vapply(compiledConceptSets, `[[`, character(1), "name"),
+    json = vapply(compiledConceptSets, `[[`, character(1), "json")
+  )
+  if (any(!nzchar(conceptSetsToDescribe$name)) || anyDuplicated(conceptSetsToDescribe$name)) {
+    stop("Each concept set must have a non-empty, unique name")
+  }
+
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+  conceptSetsToDescribe <- ensureConceptSetsExist(conceptSetsToDescribe, connection)
+
+  requestedConceptSets <- paste(
+    sprintf(
+      "SELECT %s AS concept_set_hash, %d AS input_order, %s AS concept_set_name",
+      quoteSqlString(conceptSetsToDescribe$conceptSetHash),
+      conceptSetsToDescribe$inputOrder,
+      quoteSqlString(conceptSetsToDescribe$name)
+    ),
+    collapse = " UNION ALL "
+  )
+  sql <- "
+    WITH requested_concept_sets AS (
+      @requested_concept_sets
+    ),
+    measurements AS (
+      SELECT requested.concept_set_hash,
+        requested.concept_set_name,
+        requested.input_order,
+        COALESCE(measurement.unit_concept_id, 0) AS unit_concept_id,
+        measurement.person_id,
+        measurement.value_as_number
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.measurement measurement
+        ON concept_set.concept_id = measurement.measurement_concept_id
+    ),
+    unit_counts AS (
+      SELECT concept_set_hash,
+        concept_set_name,
+        input_order,
+        unit_concept_id,
+        COUNT(*) AS measurement_count,
+        COUNT(DISTINCT person_id) AS person_count,
+        SUM(CASE WHEN value_as_number IS NULL THEN 1 ELSE 0 END) AS missing_value_count,
+        MIN(value_as_number) AS min_value,
+        MAX(value_as_number) AS max_value,
+        AVG(value_as_number) AS mean_value,
+        STDEV(value_as_number) AS sd_value
+      FROM measurements
+      GROUP BY concept_set_hash, concept_set_name, input_order, unit_concept_id
+    ),
+    ranked_values AS (
+      SELECT concept_set_hash,
+        unit_concept_id,
+        value_as_number,
+        ROW_NUMBER() OVER (
+          PARTITION BY concept_set_hash, unit_concept_id
+          ORDER BY value_as_number
+        ) AS value_order,
+        COUNT(*) OVER (PARTITION BY concept_set_hash, unit_concept_id) AS value_count
+      FROM measurements
+      WHERE value_as_number IS NOT NULL
+    ),
+    percentiles AS (
+      SELECT concept_set_hash,
+        unit_concept_id,
+        MIN(CASE WHEN value_order >= 0.10 * value_count THEN value_as_number END) AS p10_value,
+        MIN(CASE WHEN value_order >= 0.25 * value_count THEN value_as_number END) AS p25_value,
+        MIN(CASE WHEN value_order >= 0.50 * value_count THEN value_as_number END) AS median_value,
+        MIN(CASE WHEN value_order >= 0.75 * value_count THEN value_as_number END) AS p75_value,
+        MIN(CASE WHEN value_order >= 0.90 * value_count THEN value_as_number END) AS p90_value
+      FROM ranked_values
+      GROUP BY concept_set_hash, unit_concept_id
+    )
+    SELECT unit_counts.concept_set_name,
+      unit_counts.unit_concept_id,
+      CASE
+        WHEN unit_counts.unit_concept_id = 0 THEN 'No unit'
+        ELSE COALESCE(concept.concept_name, 'Unknown concept')
+      END AS unit_concept_name,
+      unit_counts.measurement_count,
+      unit_counts.person_count,
+      unit_counts.missing_value_count,
+      unit_counts.min_value,
+      percentiles.p10_value,
+      percentiles.p25_value,
+      percentiles.median_value,
+      percentiles.p75_value,
+      percentiles.p90_value,
+      unit_counts.max_value,
+      unit_counts.mean_value,
+      unit_counts.sd_value
+    FROM unit_counts
+    LEFT JOIN percentiles
+      ON unit_counts.concept_set_hash = percentiles.concept_set_hash
+        AND unit_counts.unit_concept_id = percentiles.unit_concept_id
+    LEFT JOIN @cdm_database_schema.concept concept
+      ON unit_counts.unit_concept_id = concept.concept_id
+    ORDER BY unit_counts.input_order, unit_counts.measurement_count DESC;
+  "
+  descriptives <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    requested_concept_sets = requestedConceptSets,
+    cohort_database_schema = cohortDatabaseSchema,
+    concept_set_table = conceptSetTable,
+    cdm_database_schema = cdmDatabaseSchema,
+    snakeCaseToCamelCase = TRUE
+  )
+  if (nrow(descriptives) == 0) {
+    return("No measurements found for the provided concept set(s)")
+  }
+  return(jsonlite::toJSON(descriptives, auto_unbox = TRUE, pretty = TRUE, na = "null"))
+}
+
 evaluateCohort <- function(cohortId, phenotype) {
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
@@ -970,6 +1090,23 @@ countConceptSetPersonOverlapTool <- tool(
   )
 )
 
+describeMeasurementValuesTool <- tool(
+  describeMeasurementValues,
+  description = paste(
+    "For a measurement concept set, enumerate all units observed in the database and return",
+    "descriptives of the measurement value distribution per unit: number of measurements,",
+    "number of distinct persons, number of measurements without a value, minimum, 10th, 25th,",
+    "50th, 75th and 90th percentile, maximum, mean, and standard deviation. Measurements without",
+    "a unit are reported as unit concept ID 0 ('No unit')."
+  ),
+  arguments = list(
+    caprCode = type_array(type_string(paste(
+      "A standalone Capr cs(...) expression. Supply one or more expressions; include a",
+      "name argument in each expression."
+    )))
+  )
+)
+
 evaluateCohortTool <- tool(
   evaluateCohort,
   description = paste(
@@ -1018,6 +1155,7 @@ mcp_server(
     getCohortCountTool,
     getDatabaseDescriptionTool,
     countConceptSetPersonOverlapTool,
+    describeMeasurementValuesTool,
     validateCaprTool,
     convertCaprToJsonTool,
     generateCohortTool,
