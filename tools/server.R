@@ -47,6 +47,8 @@ databaseDescription <- "Medical claims, pharmacy claims, lab test results, inpat
 cdmDatabaseSchema <- "optum_extended_dod.cdm_optum_extended_dod_v4020"
 cohortDatabaseSchema <- "scratch.scratch_mschuemi"
 cohortTable <- "agent_test_cohort"
+conceptSetDefinitionTable <- "agent_test_concept_set_definition"
+conceptSetTable <- "agent_test_concept_set"
 referenceCohortDatabaseSchema <- "scratch.scratch_all"
 referenceCohortTable <- "reference_cohort_optum_extended_dod_v4020"
 referenceCohortProfilesTable <- "reference_cohort_profiles_optum_extended_dod_v4020"
@@ -152,6 +154,115 @@ compileCaprViaWorker <- function(caprCode, timeoutSeconds = 60) {
     env = callr::rcmd_safe_env(),
     show = FALSE
   )
+}
+
+compileCaprConceptSetsViaWorker <- function(caprCode, timeoutSeconds = 60) {
+  workerPath <- normalizePath(file.path("tools", "compileWorker.R"), mustWork = TRUE)
+  callr::r(
+    func = function(code, worker) {
+      suppressPackageStartupMessages(library(Capr))
+      source(worker, local = TRUE)
+      validateAndCompileConceptSets(code)
+    },
+    args = list(code = caprCode, worker = workerPath),
+    timeout = timeoutSeconds,
+    env = callr::rcmd_safe_env(),
+    show = FALSE
+  )
+}
+
+ensureConceptSetTablesExist <- function(connection) {
+  sql <- "
+    CREATE TABLE IF NOT EXISTS @cohort_database_schema.@definition_table (
+      concept_set_hash STRING,
+      concept_set_name STRING,
+      concept_set_json STRING
+    );
+
+    CREATE TABLE IF NOT EXISTS @cohort_database_schema.@concept_set_table (
+      concept_set_hash STRING,
+      concept_id BIGINT
+    );
+  "
+  DatabaseConnector::renderTranslateExecuteSql(
+    connection = connection,
+    sql = sql,
+    cohort_database_schema = cohortDatabaseSchema,
+    definition_table = conceptSetDefinitionTable,
+    concept_set_table = conceptSetTable,
+    progressBar = FALSE,
+    reportOverallTime = FALSE
+  )
+}
+
+quoteSqlString <- function(value) {
+  paste0("'", gsub("'", "''", value, fixed = TRUE), "'")
+}
+
+ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
+  ensureConceptSetTablesExist(connection)
+  conceptSetsToCreate$conceptSetHash <- vapply(
+    conceptSetsToCreate$json,
+    CohortGenerator::computeChecksum,
+    character(1)
+  )
+
+  existingHashes <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = "SELECT concept_set_hash FROM @cohort_database_schema.@definition_table;",
+    cohort_database_schema = cohortDatabaseSchema,
+    definition_table = conceptSetDefinitionTable,
+    snakeCaseToCamelCase = TRUE
+  ) |>
+    pull(conceptSetHash)
+
+  newConceptSetRows <- which(!conceptSetsToCreate$conceptSetHash %in% existingHashes)
+  for (rowIndex in newConceptSetRows) {
+    conceptSetHash <- conceptSetsToCreate$conceptSetHash[rowIndex]
+    conceptSetSql <- CirceR::buildConceptSetQuery(conceptSetsToCreate$json[rowIndex])
+    sql <- "
+      MERGE INTO @cohort_database_schema.@concept_set_table AS target
+      USING (
+        SELECT @concept_set_hash AS concept_set_hash, concept_id
+        FROM (
+          @concept_set_sql
+        ) concept_set
+      ) AS source
+      ON target.concept_set_hash = source.concept_set_hash
+        AND target.concept_id = source.concept_id
+      WHEN NOT MATCHED THEN
+        INSERT (concept_set_hash, concept_id)
+        VALUES (source.concept_set_hash, source.concept_id);
+
+      MERGE INTO @cohort_database_schema.@definition_table AS target
+      USING (
+        SELECT @concept_set_hash AS concept_set_hash,
+          @concept_set_name AS concept_set_name,
+          @concept_set_json AS concept_set_json
+      ) AS source
+      ON target.concept_set_hash = source.concept_set_hash
+      WHEN NOT MATCHED THEN
+        INSERT (concept_set_hash, concept_set_name, concept_set_json)
+        VALUES (source.concept_set_hash, source.concept_set_name, source.concept_set_json);
+    "
+    DatabaseConnector::renderTranslateExecuteSql(
+      connection = connection,
+      sql = sql,
+      cohort_database_schema = cohortDatabaseSchema,
+      concept_set_table = conceptSetTable,
+      definition_table = conceptSetDefinitionTable,
+      concept_set_hash = quoteSqlString(conceptSetHash),
+      concept_set_name = quoteSqlString(conceptSetsToCreate$name[rowIndex]),
+      concept_set_json = quoteSqlString(conceptSetsToCreate$json[rowIndex]),
+      concept_set_sql = SqlRender::render(
+        conceptSetSql,
+        vocabulary_database_schema = cdmDatabaseSchema
+      ),
+      progressBar = FALSE,
+      reportOverallTime = FALSE
+    )
+  }
+  return(conceptSetsToCreate)
 }
 
 getKeeperReferenceCohortId <- function(phenotype, connection) {
@@ -363,6 +474,135 @@ getCohortCount <- function(cohortId) {
 
 getDatabaseDescription <- function(databaseName) {
   return(databaseDescription)
+}
+
+countConceptSetPersonOverlap <- function(caprCode, cohortId) {
+  compiledConceptSets <- compileCaprConceptSetsViaWorker(caprCode)
+  conceptSetsToCount <- tibble(
+    inputOrder = seq_along(compiledConceptSets),
+    name = vapply(compiledConceptSets, `[[`, character(1), "name"),
+    json = vapply(compiledConceptSets, `[[`, character(1), "json")
+  )
+  if (any(!nzchar(conceptSetsToCount$name)) || anyDuplicated(conceptSetsToCount$name)) {
+    stop("Each concept set must have a non-empty, unique name")
+  }
+
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+  conceptSetsToCount <- ensureConceptSetsExist(conceptSetsToCount, connection)
+
+  requestedConceptSets <- paste(
+    sprintf(
+      "SELECT %s AS concept_set_hash, %d AS input_order, %s AS concept_set_name",
+      quoteSqlString(conceptSetsToCount$conceptSetHash),
+      conceptSetsToCount$inputOrder,
+      quoteSqlString(conceptSetsToCount$name)
+    ),
+    collapse = " UNION ALL "
+  )
+  sql <- "
+    WITH requested_concept_sets AS (
+      @requested_concept_sets
+    ),
+    cohort_persons AS (
+      SELECT DISTINCT subject_id AS person_id
+      FROM @cohort_database_schema.@cohort_table
+      WHERE cohort_definition_id = @cohort_id
+    ),
+    domain_persons AS (
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Condition' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.condition_occurrence occurrence
+        ON concept_set.concept_id = occurrence.condition_concept_id
+
+      UNION ALL
+
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Procedure' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.procedure_occurrence occurrence
+        ON concept_set.concept_id = occurrence.procedure_concept_id
+
+      UNION ALL
+
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Drug' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.drug_exposure occurrence
+        ON concept_set.concept_id = occurrence.drug_concept_id
+
+      UNION ALL
+
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Measurement' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.measurement occurrence
+        ON concept_set.concept_id = occurrence.measurement_concept_id
+
+      UNION ALL
+
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Observation' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.observation occurrence
+        ON concept_set.concept_id = occurrence.observation_concept_id
+
+      UNION ALL
+
+      SELECT DISTINCT requested.concept_set_hash, occurrence.person_id,
+        'Visit' AS domain_id
+      FROM requested_concept_sets requested
+      INNER JOIN @cohort_database_schema.@concept_set_table concept_set
+        ON requested.concept_set_hash = concept_set.concept_set_hash
+      INNER JOIN @cdm_database_schema.visit_occurrence occurrence
+        ON concept_set.concept_id = occurrence.visit_concept_id
+    )
+    SELECT requested.concept_set_hash, requested.concept_set_name,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Condition' THEN domain.person_id END) AS condition_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Condition' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS condition_cohort_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Procedure' THEN domain.person_id END) AS procedure_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Procedure' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS procedure_cohort_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Drug' THEN domain.person_id END) AS drug_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Drug' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS drug_cohort_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Measurement' THEN domain.person_id END) AS measurement_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Measurement' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS measurement_cohort_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Observation' THEN domain.person_id END) AS observation_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Observation' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS observation_cohort_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Visit' THEN domain.person_id END) AS visit_persons,
+      COUNT(DISTINCT CASE WHEN domain.domain_id = 'Visit' AND cohort.person_id IS NOT NULL THEN domain.person_id END) AS visit_cohort_persons,
+      COUNT(DISTINCT domain.person_id) AS overall_persons,
+      COUNT(DISTINCT CASE WHEN cohort.person_id IS NOT NULL THEN domain.person_id END) AS overall_cohort_persons
+    FROM requested_concept_sets requested
+    LEFT JOIN domain_persons domain
+      ON requested.concept_set_hash = domain.concept_set_hash
+    LEFT JOIN cohort_persons cohort
+      ON domain.person_id = cohort.person_id
+    GROUP BY requested.concept_set_hash, requested.concept_set_name, requested.input_order
+    ORDER BY requested.input_order;
+  "
+  counts <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    requested_concept_sets = requestedConceptSets,
+    cohort_database_schema = cohortDatabaseSchema,
+    cohort_table = cohortTable,
+    cohort_id = cohortId,
+    concept_set_table = conceptSetTable,
+    cdm_database_schema = cdmDatabaseSchema,
+    snakeCaseToCamelCase = TRUE
+  )
+  return(jsonlite::toJSON(counts, auto_unbox = TRUE, pretty = TRUE))
 }
 
 evaluateCohort <- function(cohortId, phenotype) {
@@ -592,6 +832,22 @@ getDatabaseDescriptionTool <- tool(
   )
 )
 
+countConceptSetPersonOverlapTool <- tool(
+  countConceptSetPersonOverlap,
+  description = paste(
+    "Instantiate one or more Capr concept sets and count distinct people with their concepts",
+    "in the general population and among people in a generated cohort. Returns per-domain",
+    "and overall counts. Instantiated concept sets are cached by hash for reuse."
+  ),
+  arguments = list(
+    caprCode = type_array(type_string(paste(
+      "A standalone Capr cs(...) expression. Supply one or more expressions; include a",
+      "name argument in each expression."
+    ))),
+    cohortId = type_integer("The cohort ID as returned by the `generate_cohort` tool.")
+  )
+)
+
 evaluateCohortTool <- tool(
   evaluateCohort,
   description = paste(
@@ -639,6 +895,7 @@ mcp_server(
     getConceptSetsCaprTool,
     getCohortCountTool,
     getDatabaseDescriptionTool,
+    countConceptSetPersonOverlapTool,
     validateCaprTool,
     convertCaprToJsonTool,
     generateCohortTool,

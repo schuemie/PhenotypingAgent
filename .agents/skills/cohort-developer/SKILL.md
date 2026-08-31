@@ -31,12 +31,28 @@ Data in observational healthcare databases (insurance claims, electronic health 
 	- Each `cs(...)` snippet from `get_concept_set_capr` needs a `name = "..."` added when you inline it.
 4. **Cohort Generation:** Pass the **Capr cohort definition as R code** to the `generate_cohort` tool to instantiate the cohort in the database. This tool returns a **cohort ID**.
 5. **Count Verification:** Call the `get_cohort_count` tool using the returned **cohort ID** to get cohort counts (split by inclusion rules). If the counts seem unreasonable (e.g., they are 0, or attrition is too high), adjust your Capr code and repeat Steps 3-5.
+6. **Temporal Concept Set Overlap:** Before the first KEEPER evaluation, use the
+   `countConceptSetPersonOverlapTool` tool to assess concept sets whose inclusion,
+   exclusion, domain, or temporal role remains uncertain.
+   
+   6. **Concept Set Overlap:** If unsure whether to use specific concept sets, analyze the overlap between them and your cohort using the `countConceptSetPersonOverlapTool` tool and adjust your cohort definition accordingly.
 
 ### Phase 3: KEEPER Evaluation (MAXIMUM 3 ATTEMPTS)
 *To strictly avoid overfitting to the reference set, you are limited to a maximum of 3 calls to `evaluate_cohort`.*
-6. **Evaluate:** Once counts are reasonable, call the `evaluate_cohort` tool using the **cohort ID** to get a summary of the cohort's operating characteristics against the KEEPER reference set. 
-7. **Patient Profiling:** To understand the performance, call the `sample_patient_profile` tool (using the **cohort ID**) to review individual patient profiles.
-8. **Refine or Terminate:** Adjust the cohort definition based on evaluation results. Return to Phase 2 to regenerate the cohort. You must **STOP** when the operating characteristics are sufficient (aiming for PPV and Sensitivity > 80%), OR after you have executed Step 6 exactly 3 times.
+
+Proceed to KEEPER evaluation only after:
+- The generated cohort has a clinically plausible count and attrition profile.
+- Important concept-set choices have been examined with temporally aligned
+   overlap windows.
+- Obvious concept-set, domain, and timing problems have been addressed without
+   reference to KEEPER labels.
+
+Temporal overlap calls do not count toward the three-evaluation limit because
+they do not use the KEEPER reference labels.
+
+7. **Evaluate:** Call the `evaluate_cohort` tool using the **cohort ID** to get a summary of the cohort's operating characteristics against the KEEPER reference set. 
+8. **Patient Profiling:** To understand the performance, call the `sample_patient_profile` tool (using the **cohort ID**) to review individual patient profiles.
+9. **Refine or Terminate:** Adjust the cohort definition based on evaluation results. Return to Phase 2 to regenerate the cohort. You must **STOP** when the operating characteristics are sufficient (aiming for PPV and Sensitivity > 80%), OR after you have executed Step 7 exactly 3 times.
 
 ## Final Output
 Present the user with the final Capr R code and a summary of the evaluation results. If the user wants the OMOP JSON, produce it with the `convert_capr_to_json` tool, saving it to file immediately. There is no need to verify the JSON.

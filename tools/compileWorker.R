@@ -138,3 +138,31 @@ validateAndCompileCapr <- function(caprCode, maxChars = 100000L) {
   }
   Capr::compile(cohortObj)
 }
+
+# Public entry point for one or more standalone Capr concept-set expressions.
+validateAndCompileConceptSets <- function(caprCode, maxChars = 100000L) {
+  if (!is.character(caprCode) || length(caprCode) < 1L || anyNA(caprCode)) {
+    stop("caprCode must contain one or more non-NA strings")
+  }
+  if (any(nchar(caprCode) > maxChars)) {
+    stop("A caprCode value exceeds the ", maxChars, "-character size limit")
+  }
+
+  lapply(caprCode, function(code) {
+    exprs <- parse(text = code, keep.source = FALSE)
+    if (length(exprs) != 1L) {
+      stop("Each value must contain exactly one Capr cs(...) expression")
+    }
+    expr <- exprs[[1]]
+    validateCaprAst(expr)
+
+    conceptSet <- eval(expr, envir = buildCaprEvalEnv())
+    if (!methods::is(conceptSet, "ConceptSet")) {
+      stop("Expression did not evaluate to a Capr ConceptSet object")
+    }
+    list(
+      name = conceptSet@Name,
+      json = Capr::toConceptSetJson(conceptSet)
+    )
+  })
+}
