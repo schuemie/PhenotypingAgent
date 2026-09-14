@@ -66,13 +66,30 @@ Cohort()
 
 * **Operators**: `lt(x)`, `lte(x)`, `gt(x)`, `gte(x)`, `eq(x)`, `bt(x, y)`, `nbt(x, y)`. Types strict (`18L` integer, `18.0` numeric, `as.Date("...")`).
 * **Numeric/Date Attributes**: `age(op)`, `daysOfSupply(op)`, `valueAsNumber(op)`, `startDate(op)`, `endDate(op)`.
-* **Misc Attributes**: 
+* **Misc Attributes**:
   * `firstOccurrence()` (Incident/new-user cohort).
   * `valueAsConcept(ids)`, `valueAsConceptSet(cs)`, `valueAsString(text, op="contains")`.
-  * `measurementUnit(ids)`: Accepts integer IDs only, no strings/ConceptSets.
+  * `measurementUnit(ids)`: Accepts exactly one `ids` argument containing an integer vector, not multiple positional IDs, strings, or ConceptSets. Use `measurementUnit(c(0L, 8523L, 32912L))`, not `measurementUnit(0L, 8523L, 32912L)`. Extra positional arguments may be matched to optional database-connection parameters and cause misleading errors such as `dbIsValid` for an integer.
 * **Provenance/Type IDs**: `conditionType(ids)`, `visitType(ids)` (Warning: on non-visit domains, filters the linked visit's setting; on `visit()` it filters provenance, NOT setting). Exclude via `...TypeExclude(exclude=TRUE)`.
 * **Source Concepts**: `conditionSourceConcept(cs)`, `drugSourceConcept(cs)`, etc.
 * **Demographics (Use directly in Group)**: `male()`, `female()`, `genderConcepts(ids)`, `age(op)`.
+
+### Measurement Attribute Example
+
+```r
+measurement(
+  cs_inr,
+  valueAsNumber(gte(1.5)),
+  measurementUnit(c(0L, 8523L, 32912L))
+)
+```
+
+When filtering measurements:
+
+* Keep numeric thresholds in `valueAsNumber()`, not in `measurementUnit()`.
+* Pass unit concept IDs as one integer vector. Preserve the `L` suffix so IDs are integers.
+* Use unit concept IDs observed in the target database, for example from `describeMeasurementValues`; do not infer IDs from unit names.
+* A missing unit is represented by concept ID `0L` when the database diagnostics justify including it.
 
 ## 4. Anti-Patterns (Compiles, but silently wrong)
 
