@@ -5,3 +5,5 @@ newConceptSets/*/*.*
 !mcpResult.rds
 .idea
 runs/
+__pycache__/
+*.pyc

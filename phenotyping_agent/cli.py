@@ -33,13 +33,15 @@ def run(
 
 
 @app.command("list-tools")
-def list_tools() -> None:
+def list_tools(
+    dry_run: bool = typer.Option(True, "--dry-run/--live", help="List fake tools in dry-run or discover live MCP tools."),
+) -> None:
     project_root = Path(__file__).resolve().parents[1]
     config = build_config(
         project_root=project_root,
         clinical_definition_path=project_root / "acute liver failure.txt",
         phenotype="Acute liver failure",
-        dry_run=True,
+        dry_run=dry_run,
     )
     tools = AgentRunner(config).tools
     for name in sorted(tools.client.list_tools()):

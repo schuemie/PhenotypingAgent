@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 from phenotyping_agent.config import AppConfig
 from phenotyping_agent.state import Expectation
@@ -91,6 +94,60 @@ class FakeToolClient:
         return defaults.get(name)
 
 
+def load_mcp_connections(mcp_config_path: Path, project_root: Path) -> dict[str, dict[str, Any]]:
+    raw = json.loads(mcp_config_path.read_text(encoding="utf-8"))
+    servers = raw.get("servers", {})
+    connections: dict[str, dict[str, Any]] = {}
+    for name, spec in servers.items():
+        if "command" in spec:
+            connections[name] = {
+                "transport": "stdio",
+                "command": spec["command"],
+                "args": list(spec.get("args", [])),
+                "cwd": str(project_root),
+            }
+            continue
+
+        if "url" in spec:
+            transport = str(spec.get("transport") or spec.get("type") or "http")
+            connections[name] = {
+                "transport": transport,
+                "url": spec["url"],
+            }
+            continue
+
+        raise RuntimeError(f"Unsupported MCP server config for '{name}': {spec}")
+    return connections
+
+
+class LiveToolClient:
+    def __init__(self, mcp_config_path: Path, project_root: Path) -> None:
+        self.connections = load_mcp_connections(mcp_config_path, project_root)
+        self.client = MultiServerMCPClient(self.connections, tool_name_prefix=False)
+        self.tools_by_name = self._load_tools()
+
+    def _load_tools(self) -> dict[str, Any]:
+        tools = asyncio.run(self.client.get_tools())
+        mapped: dict[str, Any] = {}
+        for tool in tools:
+            if tool.name in mapped:
+                raise RuntimeError(f"Duplicate MCP tool name detected: {tool.name}")
+            mapped[tool.name] = tool
+        return mapped
+
+    def list_tools(self) -> set[str]:
+        return set(self.tools_by_name.keys())
+
+    def call_tool(self, name: str, args: dict[str, Any]) -> Any:
+        tool = self.tools_by_name.get(name)
+        if tool is None:
+            raise RuntimeError(f"Unknown MCP tool '{name}'")
+        result = tool.invoke(args)
+        if hasattr(result, "content"):
+            return result.content
+        return result
+
+
 class ToolFacade:
     def __init__(self, config: AppConfig) -> None:
         self.config = config
@@ -99,15 +156,19 @@ class ToolFacade:
         self.budget = ToolBudget()
         self.pending_expectations: list[Expectation] = []
         self.consumed_expectations: list[Expectation] = []
-        self.client = FakeToolClient(config.project_root / "tests" / "fixtures")
+        self.client = (
+            FakeToolClient(config.project_root / "tests" / "fixtures")
+            if config.dry_run
+            else LiveToolClient(config.mcp_config_path, config.project_root)
+        )
         self._assert_toolset()
 
     def _assert_toolset(self) -> None:
         found = self.client.list_tools()
         missing = EXPECTED_TOOLS - found
-        extra = found - EXPECTED_TOOLS
-        if missing or extra:
-            raise RuntimeError(f"Tool mismatch. Missing={sorted(missing)} Extra={sorted(extra)}")
+        if missing:
+            extra = sorted(found - EXPECTED_TOOLS)
+            raise RuntimeError(f"Tool mismatch. Missing={sorted(missing)} Extra={extra}")
 
     def record_expectation(self, expectation: Expectation) -> None:
         self.pending_expectations.append(expectation)

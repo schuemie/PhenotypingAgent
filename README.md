@@ -32,9 +32,17 @@ expectation gating for diagnostics, a 3-call `evaluateCohort` cap, and run artif
 
 ```powershell
 python -m pip install -e .[dev]
+python -m phenotyping_agent.cli list-tools --live
 python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt" --dry-run
 python -m pytest -q
 ```
 
 `--dry-run` uses fixture-backed fake MCP responses so the full flow runs without external database or MCP connectivity.
+
+## Agent documentation
+
+- Architecture and status: `docs/AGENT_HANDOFF.md`
+- Runbook and troubleshooting: `docs/OPERATIONS.md`
+- MCP contract details: `docs/MCP_INTEGRATION_NOTES.md`
+- Guardrails for future code changes: `docs/CONTRIBUTING_AGENT.md`
 

@@ -1,5 +1,12 @@
 # Plan: Autonomous Python LangGraph Cohort-Developer Agent
 
+## Documentation index
+
+- Architecture and implementation status: `docs/AGENT_HANDOFF.md`
+- Operations and troubleshooting: `docs/OPERATIONS.md`
+- MCP tool contract and integration notes: `docs/MCP_INTEGRATION_NOTES.md`
+- Coding guardrails for future agents: `docs/CONTRIBUTING_AGENT.md`
+
 Implements the workflow of `.agents/skills/cohort-developer/SKILL.md` as an unattended
 Python LangGraph application, using the existing MCP tools in `tools/server.R` and the
 remote `ohdsi_hecate` server. No human in the loop.
