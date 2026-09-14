@@ -3,3 +3,4 @@ epi_*
 *.Rproj
 newConceptSets/*/*.*
 !mcpResult.rds
+.idea
