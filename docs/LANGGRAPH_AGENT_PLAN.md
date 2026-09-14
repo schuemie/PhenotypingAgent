@@ -29,7 +29,7 @@ remote `ohdsi_hecate` server. No human in the loop.
 | 11 | `CAPR_REFERENCE.md` read at runtime from the skill folder; per-node prompts live in the Python package. |
 | 12 | v1 uses pre-computed concept sets + Hecate lookups. `createNewConceptSet` stays out of scope (it is not even exposed by the server today). |
 | 13 | Six milestones, fixture-backed `--dry-run` mode, acceptance = unattended ALF run. |
-| 14 | **Every diagnostic tool call must be preceded by a registered, qualitative expectation** (direction or plausible range + rationale). Enforced by the tool wrapper, not by prompt. Precise epidemiologic benchmarks may not be invented. |
+| 14 | Every diagnostic tool call must be preceded by a registered, qualitative expectation (direction or plausible range + rationale). Enforced by the tool wrapper, not by prompt. Precise epidemiologic benchmarks may not be invented. |
 
 ## 2. Graph
 

@@ -4,3 +4,4 @@ epi_*
 newConceptSets/*/*.*
 !mcpResult.rds
 .idea
+runs/

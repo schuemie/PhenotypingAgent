@@ -21,3 +21,20 @@ The current example used for development:
 ```text
 /cohort-developer #file:acute liver failure.txt 
 ```
+
+# Python autonomous agent (v1 scaffold)
+
+The repository now also includes a Python implementation scaffold in `phenotyping_agent/`.
+It follows the workflow in `docs/LANGGRAPH_AGENT_PLAN.md` with deterministic loop control,
+expectation gating for diagnostics, a 3-call `evaluateCohort` cap, and run artifacts in `runs/<timestamp>/`.
+
+## Quick start
+
+```powershell
+python -m pip install -e .[dev]
+python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt" --dry-run
+python -m pytest -q
+```
+
+`--dry-run` uses fixture-backed fake MCP responses so the full flow runs without external database or MCP connectivity.
+

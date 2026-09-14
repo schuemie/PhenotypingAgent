@@ -1,0 +1,31 @@
+[project]
+name = "phenotyping-agent"
+version = "0.1.0"
+description = "Autonomous LangGraph cohort developer for OMOP phenotyping"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "langgraph>=0.2.60",
+  "langchain-openai>=0.2.14",
+  "langchain-mcp-adapters>=0.0.8",
+  "pydantic>=2.9.2",
+  "keyring>=25.5.0",
+  "typer>=0.12.5",
+  "rich>=13.9.4",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.3",
+]
+
+[project.scripts]
+phenotyping-agent = "phenotyping_agent.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["phenotyping_agent*"]
+
