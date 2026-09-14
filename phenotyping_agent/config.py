@@ -50,15 +50,19 @@ def build_config(
     clinical_definition_path: Path,
     phenotype: str | None,
     dry_run: bool,
+    max_iterations: int | None = None,
     run_id: str | None = None,
 ) -> AppConfig:
+    budgets = Budgets()
+    if max_iterations is not None:
+        budgets.design_iterations = max_iterations
     return AppConfig(
         project_root=project_root,
         clinical_definition_path=clinical_definition_path,
         phenotype=phenotype,
         dry_run=dry_run,
         run_id=run_id or datetime.now().strftime("%Y%m%d_%H%M%S"),
-        budgets=Budgets(),
+        budgets=budgets,
         reasoning_tier=ModelTier(provider="none", model="reasoning-dry-run"),
         fast_tier=ModelTier(provider="none", model="fast-dry-run"),
     )

@@ -9,14 +9,9 @@ from phenotyping_agent.state import AgentState
 def _build_capr(state: AgentState) -> str:
     snippets = list(state["concept_set_registry"].values())
     index_set = snippets[0] if snippets else 'cs(concept(12345), name = "Acute liver failure")'
-    exclude_set = snippets[1] if len(snippets) > 1 else index_set
     return (
         "cohort(\n"
-        "  entry = entry(conditionOccurrence(" + index_set + ")),\n"
-        "  attrition = attrition(\n"
-        "    inclusionRule(name = \"Exclude chronic liver disease\", expression = not(conditionOccurrence(" + exclude_set + ", duringInterval(-365, -1)))),\n"
-        "    inclusionRule(name = \"Adult age\", expression = age() >= 18)\n"
-        "  )\n"
+        "  entry = entry(conditionOccurrence(conceptSet = " + index_set + "))\n"
         ")"
     )
 

@@ -138,14 +138,35 @@ class LiveToolClient:
     def list_tools(self) -> set[str]:
         return set(self.tools_by_name.keys())
 
+    @staticmethod
+    def _normalize_text_blocks(payload: Any) -> Any:
+        if not isinstance(payload, list):
+            return payload
+        texts: list[str] = []
+        for item in payload:
+            if isinstance(item, str):
+                texts.append(item)
+            elif isinstance(item, dict) and "text" in item:
+                texts.append(str(item["text"]))
+            elif hasattr(item, "text"):
+                texts.append(str(getattr(item, "text")))
+        if not texts:
+            return payload
+        merged = "\n".join(texts)
+        try:
+            return json.loads(merged)
+        except json.JSONDecodeError:
+            return merged
+
     def call_tool(self, name: str, args: dict[str, Any]) -> Any:
         tool = self.tools_by_name.get(name)
         if tool is None:
             raise RuntimeError(f"Unknown MCP tool '{name}'")
-        result = tool.invoke(args)
+        result = asyncio.run(tool.ainvoke(args))
         if hasattr(result, "content"):
-            return result.content
-        return result
+            content = result.content
+            return self._normalize_text_blocks(content)
+        return self._normalize_text_blocks(result)
 
 
 class ToolFacade:

@@ -17,6 +17,7 @@ def run(
     clinical_definition: str = typer.Option(..., help="Path to clinical definition text file."),
     phenotype: str | None = typer.Option(None, help="Optional phenotype name override."),
     dry_run: bool = typer.Option(True, help="Use fixture-backed fake MCP tools."),
+    max_iterations: int | None = typer.Option(None, help="Optional cap on design iterations for this run."),
     run_id: str | None = typer.Option(None, help="Run folder identifier."),
 ) -> None:
     project_root = Path(__file__).resolve().parents[1]
@@ -25,6 +26,7 @@ def run(
         clinical_definition_path=(project_root / clinical_definition),
         phenotype=phenotype,
         dry_run=dry_run,
+        max_iterations=max_iterations,
         run_id=run_id,
     )
     state = AgentRunner(config).run()

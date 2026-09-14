@@ -74,6 +74,25 @@ normalizeName <- function(name) {
   return(gsub("[^[:alnum:]]", "", tolower(name)))
 }
 
+# MCP stdio transport requires clean stdout. Some downstream cohort-generation
+# calls emit progress/log text; capture it to avoid corrupting JSON-RPC framing.
+runQuietly <- function(expr) {
+  outputFile <- tempfile(fileext = ".log")
+  messageFile <- tempfile(fileext = ".log")
+  outputCon <- file(outputFile, open = "wt")
+  messageCon <- file(messageFile, open = "wt")
+  on.exit({
+    sink(type = "message")
+    sink()
+    close(messageCon)
+    close(outputCon)
+    unlink(c(outputFile, messageFile))
+  }, add = TRUE)
+  sink(outputCon)
+  sink(messageCon, type = "message")
+  force(expr)
+}
+
 conceptSets <- readRDS("tools/PhenelopeConceptSets.rds") |>
   mutate(normPhenotype = normalizeName(phenotype))
 
@@ -116,19 +135,23 @@ ensureCohortExists <- function(json, connection) {
     sql = sql,
     json = json
   )
-  CohortGenerator::generateCohortSet(
-    connection = connection,
-    cdmDatabaseSchema = cdmDatabaseSchema,
-    cohortDatabaseSchema = cohortDatabaseSchema,
-    cohortTableNames = cohortTableNames,
-    cohortDefinitionSet = cohortDefinitionSet,
-    incremental = TRUE,
+  runQuietly(
+    CohortGenerator::generateCohortSet(
+      connection = connection,
+      cdmDatabaseSchema = cdmDatabaseSchema,
+      cohortDatabaseSchema = cohortDatabaseSchema,
+      cohortTableNames = cohortTableNames,
+      cohortDefinitionSet = cohortDefinitionSet,
+      incremental = TRUE,
+    )
   )
-  CohortGenerator::insertInclusionRuleNames(
-    connection = connection,
-    cohortDatabaseSchema = cohortDatabaseSchema,
-    cohortDefinitionSet = cohortDefinitionSet,
-    cohortInclusionTable = cohortTableNames$cohortInclusionTable
+  runQuietly(
+    CohortGenerator::insertInclusionRuleNames(
+      connection = connection,
+      cohortDatabaseSchema = cohortDatabaseSchema,
+      cohortDefinitionSet = cohortDefinitionSet,
+      cohortInclusionTable = cohortTableNames$cohortInclusionTable
+    )
   )
   return(nextCohortId)
 }
