@@ -20,7 +20,7 @@ Data in observational healthcare databases (insurance claims, electronic health 
 ## Agent Workflow
 
 ### Phase 1: Conceptual Design
-1. **Retrieve available concept sets:** Use the `listConceptSets` tool to identify relevant OMOP concept sets for the phenotype and their person counts. Concept sets with 0 counts are likely unhelpful.
+1. **Retrieve available concept sets:** Use the `listConceptSets` tool to identify relevant OMOP concept sets for the phenotype and their person counts. Concept sets with 0 counts are likely unhelpful. Some concept sets are marked as not with descendants. These usually contain a broader concept than the phenotype itself, and might be used to capture the disease before its subtype is diagnosed. 
 2. **Apply Clinical & Database Knowledge:** Develop an initial best-guess cohort definition based on clinical reality and your knowledge of EHRs and Claims data. Outline the required concept sets and temporal logic. Use `getConceptSetsCapr` to fetch Capr `cs(...)` code and per-domain person counts for the pre-created concept sets you need. Use the `describeMeasurementValues` tool to fetch units and corresponding value distributions for measurements.
 
 ### Phase 2: Implementation, Generation and Diagnostics (Unlimited Attempts)

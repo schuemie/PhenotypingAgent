@@ -15,64 +15,91 @@ options(sqlRenderTempEmulationSchema = "scratch.scratch_mschuemi")
 referenceCohortDatabaseSchema <- "scratch.scratch_all"
 referenceCohortProfilesTable <- "reference_cohort_profiles_optum_extended_dod_v4020"
 
-# Collect all concept sets from folder ------------------------------------------------------
+conceptSetDatabaseSchema <- "scratch.scratch_all"
+conceptSetExpressionsTable <- "concept_set_expression"
+conceptSetExpressionsPlusTable <- "concept_set_expression_plus"
+phenotypeToConceptSetNameTable <- "phenotype_to_concept_set"
+
+phenotypes <- c("Acute liver failure")
+
+# Collect all concept sets from database -------------------------------------------------------------------------------
 connection <- connect(connectionDetails)
 
-folder <- "../largescalephentest/phenelopeConceptSets"
+# Get phenotypeToConceptSet for selected phenotypes
+# sql <- "
+#     SELECT *
+#     FROM @database_schema.@phenotype_to_concept_set_table
+#     WHERE phenotype IN ('@phenotypes');
+#   "
+# phenotypeToConceptSet <- DatabaseConnector::renderTranslateQuerySql(
+#   connection = connection,
+#   sql = sql,
+#   database_schema = conceptSetDatabaseSchema,
+#   phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
+#   phenotypes = paste(phenotypes, collapse = "', '"),
+#   snakeCaseToCamelCase = TRUE
+# )
+sql <- "
+    SELECT DISTINCT concept_set_expression.*
+    FROM @database_schema.@concept_set_expression_table concept_set_expression
+    INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
+      ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
+        AND phenotype_to_concept_set.hypernym = concept_set_expression.hypernym
+    WHERE phenotype IN ('@phenotypes');
+  "
+conceptSetExpressions <- DatabaseConnector::renderTranslateQuerySql(
+  connection = connection,
+  sql = sql,
+  database_schema = conceptSetDatabaseSchema,
+  phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
+  concept_set_expression_table = conceptSetExpressionsTable,
+  phenotypes = paste(phenotypes, collapse = "', '"),
+  snakeCaseToCamelCase = TRUE
+)
 
-
-# target = targets[2]
-processConceptSetTarget <- function(target, role, phenotype) {
-  jsonFile <- file.path(folder, phenotype, role, target, sprintf("%s.json", target))
-  if (!file.exists(jsonFile)) {
-    # No concepts found
-    return(NULL)
-  }
-  json <- readLines(jsonFile)  
-  json <- paste(json, collapse = "\n")
-  conceptSetSql <- CirceR::buildConceptSetQuery(json)
-  caprWithReference <- jsonToCaprWithReference(json, target)
-  
-  domains <- readr::read_csv(file.path(folder, phenotype, role, target, "domains.csv"), show_col_types = FALSE)
-  domains <- paste(domains$domainId, collapse = ",")
-  
+# row = conceptSetExpressions[1, ]
+processConceptSet <- function(row) {
+  caprWithReference <- jsonToCaprWithReference(row$conceptSetExpression, row$conceptSetName)
+  conceptSetSql <- CirceR::buildConceptSetQuery(row$conceptSetExpression)
   counts <- getCounts(conceptSetSql, connection, cdmDatabaseSchema)
   
-  row <- tibble(
-    phenotype = phenotype,
-    role = role,
-    target = target,
-    domains = domains,
-    json = json,
-    sql = conceptSetSql
-  ) |> 
+  newRow <- row |>
+    select("conceptSetName", "hypernym", "conceptSetExpression") |>
     bind_cols(caprWithReference) |>
     bind_cols(counts)
+  return(newRow)
 }
 
-# role = roles[1]
-processRole <- function(role, phenotype) {
-  message(sprintf("- Processing %s - %s", phenotype, role))
-  targets <- list.files(file.path(folder, phenotype, role))
-  rows <- lapply(targets, processConceptSetTarget, role = role, phenotype = phenotype)
-  rows <- bind_rows(rows)
-  return(rows)
+newRows <- lapply(split(conceptSetExpressions, seq_len(nrow(conceptSetExpressions))), processConceptSet)
+newRows <- bind_rows(newRows)
+
+DatabaseConnector::insertTable(
+  connection = connection,
+  databaseSchema = conceptSetDatabaseSchema,
+  tableName = conceptSetExpressionsPlusTable,
+  data = newRows,
+  createTable = TRUE,
+  dropTableIfExists = TRUE,
+  camelCaseToSnakeCase = TRUE,
+  bulkLoad = TRUE
+)
+# Test is data upload did not distort data:
+testData <- DatabaseConnector::renderTranslateQuerySql(
+  connection = connection,
+  sql = "SELECT * FROM @schema.@table;",
+  schema = conceptSetDatabaseSchema,
+  table = conceptSetExpressionsPlusTable,
+  snakeCaseToCamelCase = TRUE
+)
+x1 <- newRows |>
+  arrange(conceptSetName, hypernym)
+x2 <- testData |>
+  arrange(conceptSetName, hypernym)
+if (all.equal(x1, x2, check.attributes = FALSE)) {
+  message("Data uploaded correctly")
+} else {
+  stop("Error in conceptSetExpressions upload")
 }
-
-# phenotype = phenotypes[1]
-processPhenotype <- function(phenotype) {
-  roles <- list.dirs(file.path(folder, phenotype), recursive = FALSE, full.names = FALSE)
-  rows <- lapply(roles, processRole, phenotype = phenotype)
-  rows <- bind_rows(rows)
-}
-
-phenotypes <- list.dirs(folder, recursive = FALSE, full.names = FALSE)
-rows <- lapply(phenotypes, processPhenotype)
-rows <- bind_rows(rows)
-
-object.size(rows) / 1024^2
-saveRDS(rows, "tools/PhenelopeConceptSets.rds")
-readr::write_csv(rows, file.path(folder, "overview.csv"))
 disconnect(connection)
 
 # Add standard concept sets ---------------------------------------------------------------
@@ -81,17 +108,16 @@ connection <- connect(connectionDetails)
 # conceptSet = standardConceptSets[[1]]
 processStandardConceptSet <- function(conceptSet) {
   conceptSet <- Capr::getConceptSetDetails(conceptSet, connection, cdmDatabaseSchema)
-  json <- Capr::toConceptSetJson(conceptSet)
-  target <- conceptSet@Name
-  conceptSetSql <- CirceR::buildConceptSetQuery(json)
-  caprWithReference <- jsonToCaprWithReference(json, target)
-
+  conceptSetExpression <- Capr::toConceptSetJson(conceptSet)
+  conceptSetName <- conceptSet@Name
+  caprWithReference <- jsonToCaprWithReference(conceptSetExpression, conceptSetName)
+  conceptSetSql <- CirceR::buildConceptSetQuery(conceptSetExpression)
   counts <- getCounts(conceptSetSql, connection, cdmDatabaseSchema)
   
   row <- tibble(
-    target = target,
-    json = json,
-    sql = conceptSetSql
+    conceptSetName = conceptSetName,
+    hypernym = 0,
+    conceptSetExpression = conceptSetExpression
   ) |> 
     bind_cols(caprWithReference) |>
     bind_cols(counts)

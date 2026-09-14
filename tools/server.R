@@ -44,14 +44,24 @@ connectionDetails <- DatabaseConnector::createConnectionDetails(
 )
 databaseName <- "Optum Clinformatics"
 databaseDescription <- "Medical claims, pharmacy claims, lab test results, inpatient, and provider data. It includes electronic health data for over 126 million patients across the United States of America, beginning in 2007."
+
 cdmDatabaseSchema <- "optum_extended_dod.cdm_optum_extended_dod_v4020"
+
+# For instantiating phenotypes and concept sets (for computing overlap):
 cohortDatabaseSchema <- "scratch.scratch_mschuemi"
 cohortTable <- "agent_test_cohort"
 conceptSetDefinitionTable <- "agent_test_concept_set_definition"
 conceptSetTable <- "agent_test_concept_set"
+
+# The KEEPER reference cohorts:
 referenceCohortDatabaseSchema <- "scratch.scratch_all"
 referenceCohortTable <- "reference_cohort_optum_extended_dod_v4020"
 referenceCohortProfilesTable <- "reference_cohort_profiles_optum_extended_dod_v4020"
+
+conceptSetDatabaseSchema <- "scratch.scratch_all"
+conceptSetExpressionsPlusTable <- "concept_set_expression_plus"
+phenotypeToConceptSetNameTable <- "phenotype_to_concept_set"
+
 options(sqlRenderTempEmulationSchema = "scratch.scratch_mschuemi")
 
 # For running Phenelope:
@@ -92,9 +102,6 @@ runQuietly <- function(expr) {
   sink(messageCon, type = "message")
   force(expr)
 }
-
-conceptSets <- readRDS("tools/PhenelopeConceptSets.rds") |>
-  mutate(normPhenotype = normalizeName(phenotype))
 
 standardConceptSets <- readRDS("tools/StandardConceptSets.rds")
 
@@ -229,7 +236,7 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
     CohortGenerator::computeChecksum,
     character(1)
   )
-
+  
   existingHashes <- DatabaseConnector::renderTranslateQuerySql(
     connection = connection,
     sql = "SELECT concept_set_hash FROM @cohort_database_schema.@definition_table;",
@@ -238,7 +245,7 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
     snakeCaseToCamelCase = TRUE
   ) |>
     pull(conceptSetHash)
-
+  
   newConceptSetRows <- which(!conceptSetsToCreate$conceptSetHash %in% existingHashes)
   for (rowIndex in newConceptSetRows) {
     conceptSetHash <- conceptSetsToCreate$conceptSetHash[rowIndex]
@@ -289,50 +296,101 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
 }
 
 getKeeperReferenceCohortId <- function(phenotype, connection) {
-  if (normalizeName(phenotype) != normalizeName("Acute liver failure")) {
-    stop("Currently only supporting Acute liver failure as phenotype")
+  sql <- "
+    SELECT cohort_definition_id
+    FROM @database_schema.@table
+    WHERE LOWER(phenotype) = LOWER('@phenotype');
+  "
+  keeperReference <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    database_schema = referenceCohortDatabaseSchema,
+    table = Keeper::createReferenceCohortTableNames(referenceCohortTable)$referenceCohortMetadataTable,
+    phenotype = phenotype,
+    snakeCaseToCamelCase = TRUE
+  )
+  if (nrow(keeperReference) == 0) {
+    stop("Could not find reference cohort for phenotype ", phenotype)
   }
-  # TODO: look up in reference cohort definition table:
-  return(1)
+  return(keeperReference$cohortDefinitionId)
 }
 
 # Tool functions --------------------------------------------------------------------------------------------------------
 listConceptSets <- function(phenotype) {
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+  
+  sql <- "
+    SELECT DISTINCT concept_set_expression.*
+    FROM @database_schema.@concept_set_expression_plus_table concept_set_expression
+    INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
+      ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
+        AND phenotype_to_concept_set.hypernym = concept_set_expression.hypernym
+    WHERE LOWER(phenotype) = LOWER('@phenotype');
+  "
+  conceptSets <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    database_schema = conceptSetDatabaseSchema,
+    phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
+    concept_set_expression_plus_table = conceptSetExpressionsPlusTable,
+    phenotype = phenotype,
+    snakeCaseToCamelCase = TRUE
+  )
+  
   subset <- conceptSets |>
-    filter(normPhenotype == normalizeName(phenotype)) |>
     bind_rows(standardConceptSets) |>
-    select(conceptSetName = "target",
+    select(conceptSetName,
+           hypernym,
            overallPersons) |>
     arrange(conceptSetName)
   
-  table <- c("| conceptsetName | personCount |",
-             "| -------------- | ----------- |",
-             sprintf("| %s | %d |",
+  table <- c("| conceptsetName | withDescendants | personCount |",
+             "| -------------- | ------------------ | ----------- |",
+             sprintf("| %s | %s | %d |",
                      subset$conceptSetName,
+                     if_else(subset$hypernym == 1, "N", "Y"),
                      subset$overallPersons))
   table <- paste0(table, collapse = "\n")
   return(table)
 }
 
 getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_counts") {
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
   if (!detail %in% c("code", "code_and_counts", "full_reference")) {
     stop("The detail argument should be 'code', 'code_and_counts', or 'full_reference'")
   }
+  sql <- "
+    SELECT DISTINCT concept_set_expression.*
+    FROM @database_schema.@concept_set_expression_plus_table concept_set_expression
+    INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
+      ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
+        AND phenotype_to_concept_set.hypernym = concept_set_expression.hypernym
+    WHERE LOWER(phenotype) = '@phenotype'
+      AND LOWER(concept_set_expression.concept_set_name) IN ('@concept_set_names');
+  "
+  conceptSets <- DatabaseConnector::renderTranslateQuerySql(
+    connection = connection,
+    sql = sql,
+    database_schema = conceptSetDatabaseSchema,
+    phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
+    concept_set_expression_plus_table = conceptSetExpressionsPlusTable,
+    phenotype = tolower(phenotype),
+    concept_set_names = paste(tolower(conceptSetNames), collapse = "', '"),
+    snakeCaseToCamelCase = TRUE
+  )
   caprWithReference <- conceptSets |>
-    filter(normPhenotype == normalizeName(phenotype)) |>
     bind_rows(standardConceptSets) |>
-    filter(target %in% conceptSetNames)
+    filter(tolower(conceptSetName) %in% tolower(conceptSetNames))
   
+  # Maintain order of input:
   caprWithReference <- caprWithReference |>
-    group_by(target) |>
-    filter(row_number() == 1) |> 
-    ungroup() 
-  
-  caprWithReference <- caprWithReference |>
-    inner_join(tibble(target = conceptSetNames,
-                      order = seq_along(conceptSetNames)), by = join_by(target)) |>
+    mutate(lcConceptSetName = tolower(conceptSetName)) |>
+    inner_join(tibble(lcConceptSetName = tolower(conceptSetNames),
+                      order = seq_along(conceptSetNames)), by = join_by(lcConceptSetName)) |>
     arrange(order) |>
-    select(-order)
+    select(-order, -lcConceptSetName)
   
   columnsToInclude <- c("capr")
   if (detail %in% c("code_and_counts", "full_reference")) {
@@ -551,7 +609,7 @@ countConceptSetPersonOverlap <- function(
       any(windowsToCount$startDay > windowsToCount$endDay)) {
     stop("Time window bounds must be finite integers with startDay less than or equal to endDay")
   }
-
+  
   compiledConceptSets <- compileCaprConceptSetsViaWorker(caprCode)
   conceptSetsToCount <- tibble(
     inputOrder = seq_along(compiledConceptSets),
@@ -561,11 +619,11 @@ countConceptSetPersonOverlap <- function(
   if (any(!nzchar(conceptSetsToCount$name)) || anyDuplicated(conceptSetsToCount$name)) {
     stop("Each concept set must have a non-empty, unique name")
   }
-
+  
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
   conceptSetsToCount <- ensureConceptSetsExist(conceptSetsToCount, connection)
-
+  
   requestedConceptSets <- paste(
     sprintf(
       "SELECT %s AS concept_set_hash, %d AS input_order, %s AS concept_set_name",
@@ -746,11 +804,11 @@ describeMeasurementValues <- function(caprCode) {
   if (any(!nzchar(conceptSetsToDescribe$name)) || anyDuplicated(conceptSetsToDescribe$name)) {
     stop("Each concept set must have a non-empty, unique name")
   }
-
+  
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
   conceptSetsToDescribe <- ensureConceptSetsExist(conceptSetsToDescribe, connection)
-
+  
   requestedConceptSets <- paste(
     sprintf(
       "SELECT %s AS concept_set_hash, %d AS input_order, %s AS concept_set_name",
@@ -859,7 +917,7 @@ describeMeasurementValues <- function(caprCode) {
 computeIncidenceRate <- function(cohortId) {
   connection <- DatabaseConnector::connect(connectionDetails)
   on.exit(DatabaseConnector::disconnect(connection))
-
+  
   sql <- "
     WITH first_entry AS (
       SELECT subject_id AS person_id,
@@ -978,7 +1036,7 @@ evaluateCohort <- function(cohortId, phenotype) {
 }
 
 samplePatientProfile <- function(cohortId, phenotype, type) {
-
+  
   type <- tolower(type)
   if (!type %in% c("tp", "fp", "tn", "fn")) {
     return("Error: type must have value 'TP', 'FP', 'TN', or 'FN'")
@@ -1099,8 +1157,8 @@ listConceptSetsTool <- tool(
   listConceptSets,
   description = paste(
     "Retrieve the concept sets associated with a phenotype.",
-    "Returns a markdown table with two columns: concept set name, and the number of unique persons",
-    "with at least one of the concepts in the set.",
+    "Returns a markdown table with three columns: concept set name, whether the set includes descendants, and the",
+    "number of unique persons with at least one of the concepts in the set.",
     "A count of 0 means nobody has any of the concepts."
   ),
   arguments = list(

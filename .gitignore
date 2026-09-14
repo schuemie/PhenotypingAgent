@@ -1,3 +1,4 @@
+__pycache__/
 epi_*
 .Rproj.user
 *.Rproj
@@ -5,5 +6,4 @@ newConceptSets/*/*.*
 !mcpResult.rds
 .idea
 runs/
-__pycache__/
 *.pyc

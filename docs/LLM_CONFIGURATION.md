@@ -1,0 +1,279 @@
+# LLM Configuration Guide
+
+This guide explains how to configure and run the PhenotypingAgent with real LLM models.
+
+## Overview
+
+The PhenotypingAgent uses two LLM tiers for different purposes:
+
+1. **Reasoning Tier** (`reasoning_tier`): High-quality models for complex reasoning tasks
+   - Design iteration and refinement
+   - Capr code generation and repair
+   - Patient profile interpretation
+   - Expectation evaluation and diagnosis
+   - Models: GPT-4o, GPT-4-turbo, Claude 3.5 Sonnet, Claude 3 Opus
+
+2. **Fast Tier** (`fast_tier`): Efficient models for lightweight expansions
+   - Concept set retrieval and selection
+   - Quick validation checks
+   - Deterministic transformations
+   - Models: GPT-4o-mini, GPT-3.5-turbo, Claude 3.5 Haiku
+
+## Supported LLM Providers
+
+### 1. OpenAI (Recommended for most users)
+
+**Prerequisites:**
+- OpenAI API account: https://platform.openai.com/account/api-keys
+- API key with GPT-4o access
+
+**Setup:**
+```bash
+# Copy .env.example to .env
+cp .env.example .env
+
+# Edit .env and set:
+OPENAI_API_KEY=sk-...
+REASONING_TIER_PROVIDER=openai
+REASONING_TIER_MODEL=gpt-4o
+FAST_TIER_PROVIDER=openai
+FAST_TIER_MODEL=gpt-4o-mini
+```
+
+**Run:**
+```bash
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run false
+```
+
+### 2. Azure OpenAI (For enterprise users with Azure subscriptions)
+
+**Prerequisites:**
+- Azure OpenAI deployment
+- Resource and deployment names
+- API key from Azure Portal
+
+**Setup:**
+```bash
+# Edit .env and set:
+AZURE_OPENAI_API_KEY=...
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com
+AZURE_OPENAI_API_VERSION=2024-08-01
+AZURE_OPENAI_DEPLOYMENT_NAME=gpt-4o-deployment
+REASONING_TIER_PROVIDER=azure_openai
+REASONING_TIER_MODEL=gpt-4o-deployment
+FAST_TIER_PROVIDER=azure_openai
+FAST_TIER_MODEL=gpt-4o-mini-deployment
+```
+
+**Run:**
+```bash
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run false
+```
+
+### 3. Anthropic Claude (For Claude-preferred workflows)
+
+**Prerequisites:**
+- Anthropic console account: https://console.anthropic.com/account/keys
+- API key with sufficient quota
+
+**Setup:**
+```bash
+# Edit .env and set:
+ANTHROPIC_API_KEY=sk-ant-...
+REASONING_TIER_PROVIDER=anthropic
+REASONING_TIER_MODEL=claude-3-5-sonnet-20241022
+FAST_TIER_PROVIDER=anthropic
+FAST_TIER_MODEL=claude-3-5-haiku-20241022
+```
+
+**Run:**
+```bash
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run false
+```
+
+## Configuration Methods
+
+### Method 1: Environment File (.env) - Recommended
+
+1. Copy the template:
+   ```bash
+   cp .env.example .env
+   ```
+
+2. Edit `.env` with your credentials and model choices
+
+3. Run (environment variables are loaded automatically):
+   ```bash
+   phenotyping-agent run --clinical-definition "acute liver failure.txt" --dry-run false
+   ```
+
+### Method 2: Command-Line Arguments
+
+Pass LLM configuration directly via CLI options:
+
+```bash
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run false \
+    --reasoning-tier-provider openai \
+    --reasoning-tier-model gpt-4o \
+    --fast-tier-provider openai \
+    --fast-tier-model gpt-4o-mini
+```
+
+### Method 3: Environment Variables (Advanced)
+
+Set variables directly in your shell:
+
+```bash
+export REASONING_TIER_PROVIDER=openai
+export REASONING_TIER_MODEL=gpt-4o
+export FAST_TIER_PROVIDER=openai
+export FAST_TIER_MODEL=gpt-4o-mini
+export OPENAI_API_KEY=sk-...
+
+phenotyping-agent run --clinical-definition "acute liver failure.txt" --dry-run false
+```
+
+## Dry-Run Mode (Testing without LLM costs)
+
+To test the workflow without consuming LLM tokens:
+
+```bash
+# Uses fixture-backed models (no API keys required)
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run true
+```
+
+This is useful for:
+- Validating clinical definitions
+- Testing workflow integration
+- Debugging without incurring costs
+
+## Cost Estimation
+
+Typical costs per phenotype run (ALF example, 5 iterations):
+
+| Provider | Reasoning Tier | Fast Tier | Total |
+|----------|---|---|---|
+| OpenAI (GPT-4o + GPT-4o-mini) | $0.50 | $0.05 | ~$0.55 |
+| Azure OpenAI | Pay-per-hour (reserved capacity) | - | Varies |
+| Anthropic (Claude 3.5 Sonnet + Haiku) | $0.30 | $0.02 | ~$0.32 |
+
+**Cost control options:**
+- Use `--max-iterations 2` to limit design loops
+- Use fast-tier models for reasoning if budget-constrained
+- Enable `dry_run=true` for testing before production runs
+
+## Troubleshooting
+
+### "LLM provider is set to 'none'"
+**Cause:** Config not loaded or models not configured
+**Solution:** 
+```bash
+# Verify .env exists and is loaded
+ls -la .env
+# Or pass CLI arguments
+phenotyping-agent run ... --reasoning-tier-provider openai --reasoning-tier-model gpt-4o
+```
+
+### "OPENAI_API_KEY environment variable not set"
+**Cause:** Missing API key
+**Solution:**
+```bash
+# Check if .env is being loaded
+cat .env | grep OPENAI_API_KEY
+# If missing, add it to .env
+echo "OPENAI_API_KEY=sk-..." >> .env
+```
+
+### "Deployment name not found" (Azure)
+**Cause:** Wrong deployment name in config
+**Solution:**
+```bash
+# List available deployments
+az cognitiveservices account deployment list --resource-group <rg> --name <resource>
+# Update AZURE_OPENAI_DEPLOYMENT_NAME in .env
+```
+
+### "Rate limit exceeded"
+**Cause:** Too many concurrent calls or quota exhausted
+**Solution:**
+- Reduce `--max-iterations` to limit calls
+- Use `--fast-tier-model` with smaller budget
+- Wait before retrying (typically 1 min)
+- Contact provider to increase quota
+
+## Best Practices
+
+1. **Security:**
+   - Never commit `.env` file with real API keys
+   - Use `.gitignore` to exclude `.env`
+   - Rotate API keys regularly
+
+2. **Cost Control:**
+   - Start with `--dry-run true` for testing
+   - Use `--max-iterations 2` for initial runs
+   - Monitor actual costs in provider dashboards
+
+3. **Model Selection:**
+   - Use reasoning tier only for complex tasks (design, diagnosis)
+   - Use fast tier for all lightweight operations
+   - Consider cheaper models if fine-tuning batch processing
+
+4. **Error Recovery:**
+   - Runs support checkpoint/resume
+   - Failed runs can be resumed without full restart
+   - Check `runs/{run_id}/` for intermediate artifacts
+
+## Model Recommendations
+
+### For Clinical Phenotyping
+**Best:** GPT-4o (reasoning) + GPT-4o-mini (fast)
+- Strong causal reasoning
+- Good code generation
+- Well-tested on biomedical tasks
+
+### For Cost-Sensitive Deployments
+**Alternative:** Claude 3.5 Sonnet + Haiku
+- Excellent reasoning for lower cost
+- Strong at code generation
+- Good for complex design workflows
+
+### For Enterprise/Compliance
+**Required:** Azure OpenAI
+- Data residency in Azure
+- Compliance with enterprise policies
+- Pay-per-hour reserved capacity
+
+## Next Steps
+
+1. Create `.env` file with your credentials
+2. Run a dry-run first to validate configuration:
+   ```bash
+   phenotyping-agent run --clinical-definition "acute liver failure.txt" --dry-run true
+   ```
+3. Run with real LLMs on small iteration budget:
+   ```bash
+   phenotyping-agent run \
+       --clinical-definition "acute liver failure.txt" \
+       --dry-run false \
+       --max-iterations 2
+   ```
+4. Monitor costs and performance, adjust models/budget as needed
+
+## Support
+
+For issues with LLM configuration:
+1. Check error message and provider status page
+2. Verify API key and permissions
+3. Test with simpler clinical definition first
+4. Review `.env` file format and environment loading
+

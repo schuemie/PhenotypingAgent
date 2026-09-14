@@ -35,6 +35,7 @@ python -m pip install -e .[dev]
 python -m phenotyping_agent.cli list-tools --live
 python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt" --dry-run
 python -m pytest -q
+python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt"
 ```
 
 `--dry-run` uses fixture-backed fake MCP responses so the full flow runs without external database or MCP connectivity.
