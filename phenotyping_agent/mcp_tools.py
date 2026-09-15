@@ -52,7 +52,7 @@ class FakeToolClient:
         if fixture.exists():
             return json.loads(fixture.read_text(encoding="utf-8"))
         defaults: dict[str, Any] = {
-            "listConceptSets": "| conceptsetName | personCount |\n|---|---|\n| Acute liver failure | 100 |",
+            "listConceptSets": "| conceptsetName | withDescendants | personCount |\n|---|---|---|\n| Acute liver failure | Y | 100 |",
             "getDatabaseDescription": "Claims and linked labs data.",
             "getConceptSetsCapr": [
                 {

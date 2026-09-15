@@ -25,7 +25,7 @@ Each run writes to `runs/<run_id>/`:
 
 - `report.md`
 - `final_cohort.json`
-- `ledger.jsonl`
+- `ledger.json`
 - `tool_calls.jsonl`
 
 `runs/` is intentionally gitignored.

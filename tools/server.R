@@ -29,7 +29,8 @@ if(length(missingPackages) > 0) {
   stop("Missing packages: ", paste(missingPackages, collapse = ", "))
 }
 
-library(dplyr)
+warning("Starting MCP server")
+library(dplyr, quietly = TRUE, warn.conflicts = FALSE)
 library(ellmer)
 library(mcptools)
 

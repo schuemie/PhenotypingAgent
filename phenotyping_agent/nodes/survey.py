@@ -9,8 +9,14 @@ def _parse_table(table_text: str) -> list[ConceptSetSummary]:
     summaries: list[ConceptSetSummary] = []
     for row in rows[2:]:
         cols = [part.strip() for part in row.strip("|").split("|")]
-        if len(cols) >= 2 and cols[1].isdigit():
-            summaries.append(ConceptSetSummary(concept_set_name=cols[0], person_count=int(cols[1])))
+        if len(cols) >= 3 and cols[2].isdigit():
+            summaries.append(
+                ConceptSetSummary(
+                    concept_set_name=cols[0],
+                    with_descendants=cols[1].upper() == "Y",
+                    person_count=int(cols[2]),
+                )
+            )
     return summaries
 
 

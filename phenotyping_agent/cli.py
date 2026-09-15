@@ -1,16 +1,16 @@
 from __future__ import annotations
 
+from importlib import util
 from pathlib import Path
 
 import typer
 from rich.console import Console
 
 # Load environment variables from .env file if it exists
-try:
+if util.find_spec("dotenv") is not None:
     from dotenv import load_dotenv
     load_dotenv()
-except ImportError:
-    pass  # dotenv is optional
+
 
 from phenotyping_agent.config import build_config
 from phenotyping_agent.graph import AgentRunner
@@ -23,7 +23,7 @@ console = Console()
 def run(
     clinical_definition: str = typer.Option(..., help="Path to clinical definition text file."),
     phenotype: str | None = typer.Option(None, help="Optional phenotype name override."),
-    dry_run: bool = typer.Option(True, help="Use fixture-backed fake MCP tools."),
+    dry_run: bool = typer.Option(False, help="Use fixture-backed fake MCP tools (special case)."),
     max_iterations: int | None = typer.Option(None, help="Optional cap on design iterations for this run."),
     run_id: str | None = typer.Option(None, help="Run folder identifier."),
     reasoning_tier_provider: str | None = typer.Option(

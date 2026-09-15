@@ -10,21 +10,21 @@ class LedgerStore:
     def __init__(self, run_dir: Path) -> None:
         self.run_dir = run_dir
         self.run_dir.mkdir(parents=True, exist_ok=True)
-        self.path = self.run_dir / "ledger.jsonl"
+        self.path = self.run_dir / "ledger.json"
 
     def append(self, entry: LedgerEntry) -> None:
-        with self.path.open("a", encoding="utf-8") as handle:
-            handle.write(entry.model_dump_json())
-            handle.write("\n")
+        entries = self.load()
+        entries.append(entry)
+        self.path.write_text(
+            json.dumps([item.model_dump(mode="json") for item in entries], indent=2),
+            encoding="utf-8",
+        )
 
     def load(self) -> list[LedgerEntry]:
         if not self.path.exists():
             return []
-        entries: list[LedgerEntry] = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                entries.append(LedgerEntry.model_validate_json(line))
-        return entries
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        return [LedgerEntry.model_validate(item) for item in payload]
 
 
 def render_ledger_markdown(entries: list[LedgerEntry]) -> str:

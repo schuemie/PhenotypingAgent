@@ -264,7 +264,7 @@ forces the transition anyway.
 
 - `SqliteSaver` checkpointer at `runs/<ts>/checkpoint.db`, `thread_id` = run id, enabling resume
   after a crash without re-spending cohort generations or KEEPER evaluations.
-- Artifacts: `ledger.jsonl`, `tool_calls.jsonl`, `design_<n>.json`, `cohort_<n>.R`, `report.md`,
+- Artifacts: `ledger.json`, `tool_calls.jsonl`, `design_<n>.json`, `cohort_<n>.R`, `report.md`,
   `final_cohort.json`.
 - `runs/` added to `.gitignore`.
 

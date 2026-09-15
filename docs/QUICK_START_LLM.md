@@ -107,7 +107,7 @@ When you run the agent, it executes this sequence per iteration:
          │  OUTPUT                       │
          │  - report.md                  │
          │  - final_cohort.json          │
-         │  - ledger.jsonl               │
+         │  - ledger.json                │
          └───────────────────────────────┘
 ```
 
@@ -132,7 +132,7 @@ phenotyping-agent run [OPTIONS]
 Options:
   --clinical-definition TEXT              Path to clinical definition file [required]
   --phenotype TEXT                        Optional phenotype name override
-  --dry-run BOOLEAN                       Use dry-run fixtures (default: true)
+  --dry-run BOOLEAN                       Use dry-run fixtures (default: false)
   --max-iterations INTEGER                Cap on design iterations (default: 8)
   --run-id TEXT                           Run folder identifier
   --reasoning-tier-provider TEXT          openai|azure_openai|anthropic
@@ -148,7 +148,6 @@ Options:
 ```bash
 phenotyping-agent run \
     --clinical-definition "acute liver failure.txt" \
-    --dry-run false \
     --max-iterations 3
 ```
 
@@ -156,7 +155,6 @@ phenotyping-agent run \
 ```bash
 phenotyping-agent run \
     --clinical-definition "acute liver failure.txt" \
-    --dry-run false \
     --max-iterations 3 \
     --reasoning-tier-provider azure_openai \
     --reasoning-tier-model gpt-4o-deployment \
@@ -168,7 +166,6 @@ phenotyping-agent run \
 ```bash
 phenotyping-agent run \
     --clinical-definition "acute liver failure.txt" \
-    --dry-run false \
     --max-iterations 3 \
     --reasoning-tier-provider anthropic \
     --reasoning-tier-model claude-3-5-sonnet-20241022 \
@@ -181,7 +178,6 @@ phenotyping-agent run \
 # Use OpenAI for reasoning, Anthropic for fast
 phenotyping-agent run \
     --clinical-definition "acute liver failure.txt" \
-    --dry-run false \
     --reasoning-tier-provider openai \
     --reasoning-tier-model gpt-4o \
     --fast-tier-provider anthropic \
@@ -248,4 +244,5 @@ cat .env | grep REASONING_TIER
 5. ✅ Increase iterations as needed for production
 
 For detailed configuration options, see: [docs/LLM_CONFIGURATION.md](LLM_CONFIGURATION.md)
+
 

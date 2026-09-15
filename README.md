@@ -39,6 +39,7 @@ python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.t
 ```
 
 `--dry-run` uses fixture-backed fake MCP responses so the full flow runs without external database or MCP connectivity.
+For a real run, configure your LLM provider/API key first (for example in `.env`), then run without `--dry-run`.
 
 ## Agent documentation
 

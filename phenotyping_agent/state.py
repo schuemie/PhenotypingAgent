@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, model_validator
 
 class ConceptSetSummary(BaseModel):
     concept_set_name: str
+    with_descendants: bool
     person_count: int
 
 
