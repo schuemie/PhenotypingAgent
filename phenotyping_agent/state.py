@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import operator
 from typing import Annotated, Literal, TypedDict
 
 from pydantic import BaseModel, Field, model_validator
@@ -81,6 +80,10 @@ class IncidenceRow(BaseModel):
 
 class IncidenceSummary(BaseModel):
     rows: list[IncidenceRow] = Field(default_factory=list)
+    note: str | None = Field(
+        default=None,
+        description="Message returned instead of rows, e.g. 'No observation time found'.",
+    )
 
 
 class KeeperMetrics(BaseModel):
@@ -91,6 +94,18 @@ class KeeperMetrics(BaseModel):
     fp: int
     tn: int
     fn: int
+
+
+class FailureMode(BaseModel):
+    """A hypothesised reason the cohort mis-classifies people."""
+
+    pattern: str
+    evidence_person_count: int = 0
+    mechanism: str = Field(
+        description="Clinical or data-capture mechanism. Person-level anecdotes are not a mechanism."
+    )
+    proposed_design_change: str
+    expected_metric_effect: str
 
 
 class LedgerEntry(BaseModel):
@@ -107,6 +122,72 @@ class LedgerEntry(BaseModel):
     keeper: KeeperMetrics | None = None
     interpretation: str = ""
     next_action: Literal["iterate", "evaluate", "done"] = "iterate"
+    attrition_mechanisms: list[str] = Field(default_factory=list)
+    readiness_rationale: str = ""
+    failure_modes: list[FailureMode] = Field(default_factory=list)
+    gate_blockers: list[str] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------------------
+# Structured LLM output schemas
+# --------------------------------------------------------------------------------------
+
+
+class DesignOutput(BaseModel):
+    """Structured result of the `design` node."""
+
+    design: Design
+    change_from_previous: str = Field(
+        description="What changed relative to the previous iteration, or 'Initial draft'."
+    )
+    expectations: list[Expectation] = Field(
+        default_factory=list,
+        description=(
+            "Expectations to pre-register for the diagnostics that will run after cohort "
+            "generation. Must include cohortCount/overall and incidenceRate/overall."
+        ),
+    )
+    not_expressible: bool = False
+    not_expressible_reason: str | None = None
+
+
+class RawVerdict(BaseModel):
+    """A verdict referring to a pre-registered expectation by position."""
+
+    expectation_index: int
+    observed: str
+    verdict: Literal["held", "violated", "uninformative"]
+    reasoning: str
+
+
+class AssessOutput(BaseModel):
+    """Structured result of the `assess` node."""
+
+    verdicts: list[RawVerdict] = Field(default_factory=list)
+    interpretation: str = ""
+    attrition_mechanisms: list[str] = Field(default_factory=list)
+    readiness_rationale: str = ""
+    next_action: Literal["iterate", "evaluate", "done"] = "iterate"
+
+
+class DiagnoseOutput(BaseModel):
+    """Structured result of the `diagnose` node."""
+
+    summary: str = ""
+    failure_modes: list[FailureMode] = Field(default_factory=list)
+
+
+def merge_ledger(existing: list[LedgerEntry], incoming: list[LedgerEntry]) -> list[LedgerEntry]:
+    """Reducer for `AgentState.ledger`.
+
+    Appends new iterations, but *replaces* an entry with the same iteration number. `evaluate`
+    and `diagnose` run after `assess` has already written the entry, so they need to amend it
+    rather than duplicate it.
+    """
+    merged: dict[int, LedgerEntry] = {entry.iteration: entry for entry in existing}
+    for entry in incoming:
+        merged[entry.iteration] = entry
+    return [merged[key] for key in sorted(merged)]
 
 
 class AgentState(TypedDict):
@@ -119,10 +200,27 @@ class AgentState(TypedDict):
     current_capr: str | None
     current_cohort_id: int | None
     pending_expectations: list[Expectation]
-    ledger: Annotated[list[LedgerEntry], operator.add]
+    used_expectations: list[Expectation]
+    ledger: Annotated[list[LedgerEntry], merge_ledger]
     next_action: Literal["iterate", "evaluate", "done"]
     final_report: str | None
     iteration: int
     evaluate_calls: int
+    # Diagnostics captured by `measure` / `evaluate`, typed instead of smuggled.
+    latest_counts: AttritionSummary | None
+    latest_incidence: IncidenceSummary | None
+    latest_overlap: list[dict]
+    latest_measurements: list[dict]
+    latest_keeper: KeeperMetrics | None
+    latest_profiles: list[dict]
+    # Control / bookkeeping
+    change_from_previous: str
+    capr_errors: list[str]
+    failure_modes: list[FailureMode]
+    concept_set_gaps: list[str]
+    not_expressible: bool
+    not_expressible_reason: str | None
+    stop_reason: str | None
+    gate_blockers: list[str]
 
 

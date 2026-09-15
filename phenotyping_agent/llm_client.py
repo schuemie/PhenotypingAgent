@@ -7,13 +7,52 @@ import time
 from uuid import uuid4
 from typing import TYPE_CHECKING, Any
 
+import re
+
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
 
 if TYPE_CHECKING:
-    from langchain_core.language_model import BaseLanguageModel
+    from langchain_core.language_models import BaseLanguageModel
 
 from phenotyping_agent.config import ModelTier
 from phenotyping_agent.llm_events import LLMEventLogger, extract_text, extract_usage
+
+# Output-token ceiling for every provider. 4096 was tight enough that a long design or report
+# could be truncated mid-JSON, which surfaces as an opaque structured-output parse failure.
+# Override with LLM_MAX_OUTPUT_TOKENS if your deployment allows less (or more).
+MAX_OUTPUT_TOKENS = int(os.getenv("LLM_MAX_OUTPUT_TOKENS", "32000"))
+
+# Reasoning models (o-series, gpt-5) reject `temperature` and `top_p`: the API only accepts the
+# default sampling settings and returns a 400 `unsupported_value` otherwise.
+_REASONING_MODEL_RE = re.compile(r"^(o\d|gpt-5)", re.IGNORECASE)
+
+# Azure endpoints are sometimes handed out as the full chat-completions URL, e.g.
+# https://host/openai-chat/openai/deployments/o3/. langchain appends
+# `/openai/deployments/<deployment>/chat/completions` itself, so passing the long form yields a
+# doubled path and an opaque 404 "Resource not found" (surfaced as OpenAIModelNotFoundError).
+_AZURE_DEPLOYMENT_PATH_RE = re.compile(
+    r"/openai/deployments/(?P<deployment>[^/?#]+).*$", re.IGNORECASE
+)
+
+
+def _is_reasoning_model(model: str) -> bool:
+    return bool(_REASONING_MODEL_RE.match(model.strip()))
+
+
+def _sampling_kwargs(model: str) -> dict[str, Any]:
+    """Sampling parameters that the given model actually accepts."""
+    if _is_reasoning_model(model):
+        return {}
+    return {"temperature": 0.2, "top_p": 0.9}
+
+
+def _split_azure_endpoint(endpoint: str) -> tuple[str, str | None]:
+    """Split an Azure endpoint into (base endpoint, deployment name embedded in the URL)."""
+    endpoint = endpoint.strip().rstrip("/")
+    match = _AZURE_DEPLOYMENT_PATH_RE.search(endpoint)
+    if not match:
+        return endpoint, None
+    return endpoint[: match.start()], match.group("deployment")
 
 
 def _get_openai_client(tier: ModelTier) -> Any:
@@ -35,9 +74,8 @@ def _get_openai_client(tier: ModelTier) -> Any:
         model=tier.model,
         api_key=api_key,  # type: ignore[arg-type]
         base_url=os.getenv("OPENAI_BASE_URL"),
-        temperature=0.2,
-        top_p=0.9,
-        max_tokens=4096,
+        max_tokens=MAX_OUTPUT_TOKENS,
+        **_sampling_kwargs(tier.model),
     )
 
 
@@ -46,9 +84,13 @@ def _get_azure_openai_client(tier: ModelTier) -> Any:
 
     Expects environment variables:
     - AZURE_OPENAI_API_KEY: API key for Azure OpenAI
-    - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL
+    - AZURE_OPENAI_ENDPOINT: Azure OpenAI endpoint URL. Either the resource base
+      (https://your-resource.openai.azure.com) or a full deployment URL
+      (https://.../openai/deployments/<name>/...); the deployment suffix is stripped and, when no
+      deployment is configured elsewhere, used as the deployment name.
     - AZURE_OPENAI_API_VERSION: API version (defaults to "2024-08-01")
-    - AZURE_OPENAI_DEPLOYMENT_NAME: Deployment name (defaults to model tier name)
+    - AZURE_OPENAI_DEPLOYMENT_NAME / AZURE_OPENAI_DEPLOYMENT: Deployment name override
+      (defaults to the model tier name, then to the deployment embedded in the endpoint)
     """
     api_key = os.getenv("AZURE_OPENAI_API_KEY")
     endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
@@ -58,15 +100,29 @@ def _get_azure_openai_client(tier: ModelTier) -> Any:
             "Visit https://learn.microsoft.com/en-us/azure/cognitive-services/openai/how-to/create-resource"
         )
 
+    base_endpoint, endpoint_deployment = _split_azure_endpoint(endpoint)
+    # The per-tier model name wins: a single global deployment variable cannot describe two tiers
+    # pointing at different deployments.
+    deployment = (
+        tier.model
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME")
+        or os.getenv("AZURE_OPENAI_DEPLOYMENT")
+        or endpoint_deployment
+    )
+    if not deployment:
+        raise ValueError(
+            "No Azure OpenAI deployment configured. Set AZURE_OPENAI_DEPLOYMENT_NAME or a tier "
+            "model name (e.g. REASONING_TIER_MODEL)."
+        )
+
     return AzureChatOpenAI(
-        model=tier.model,
+        model=tier.model or deployment,
         api_key=api_key,  # type: ignore[arg-type]
-        azure_endpoint=endpoint,
+        azure_endpoint=base_endpoint,
         api_version=os.getenv("AZURE_OPENAI_API_VERSION", "2024-08-01"),
-        deployment_name=os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", tier.model),  # type: ignore[arg-type]
-        temperature=0.2,
-        top_p=0.9,
-        max_tokens=4096,
+        deployment_name=deployment,  # type: ignore[arg-type]
+        max_tokens=MAX_OUTPUT_TOKENS,
+        **_sampling_kwargs(tier.model or deployment),
     )
 
 
@@ -95,7 +151,7 @@ def _get_anthropic_client(tier: ModelTier) -> Any:
         model=tier.model,
         api_key=api_key,  # type: ignore[arg-type]
         temperature=0.2,
-        max_tokens=4096,
+        max_tokens=MAX_OUTPUT_TOKENS,
     )
 
 

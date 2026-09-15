@@ -22,11 +22,13 @@ The current example used for development:
 /cohort-developer #file:acute liver failure.txt 
 ```
 
-# Python autonomous agent (v1 scaffold)
+# Python autonomous agent
 
-The repository now also includes a Python implementation scaffold in `phenotyping_agent/`.
-It follows the workflow in `docs/LANGGRAPH_AGENT_PLAN.md` with deterministic loop control,
-expectation gating for diagnostics, a 3-call `evaluateCohort` cap, and run artifacts in `runs/<timestamp>/`.
+The repository also includes a Python implementation in `phenotyping_agent/`. It follows the
+workflow in `docs/LANGGRAPH_AGENT_PLAN.md` as a LangGraph state machine: LLM nodes produce
+structured output for design, assessment, diagnosis and the report, while loop control,
+expectation gating, the Phase 2 to Phase 3 gate and the 3-call `evaluateCohort` cap are enforced
+in code. Artifacts land in `runs/<run-id>/`.
 
 ## Quick start
 
@@ -35,11 +37,36 @@ python -m pip install -e .[dev]
 python -m phenotyping_agent.cli list-tools --live
 python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt" --dry-run
 python -m pytest -q
+```
+
+`--dry-run` is hermetic: it uses fixture-backed fake MCP responses *and* deterministic stand-ins
+for every LLM node, so the full flow runs with no database, MCP or model connectivity.
+
+## Running with real models
+
+Configure both model tiers, then run without `--dry-run`:
+
+```powershell
 python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt"
 ```
 
-`--dry-run` uses fixture-backed fake MCP responses so the full flow runs without external database or MCP connectivity.
-For a real run, configure your LLM provider/API key first (for example in `.env`), then run without `--dry-run`.
+Tiers can also come from `REASONING_TIER_PROVIDER` / `REASONING_TIER_MODEL` /
+`FAST_TIER_PROVIDER` / `FAST_TIER_MODEL` (for example in `.env`); see `docs/LLM_CONFIGURATION.md`.
+A tier left as `none` falls back to the deterministic stand-in for that node.
+
+Optional extras: `pip install -e ".[checkpoint]"` enables SQLite checkpointing and `--resume`;
+`pip install -e ".[anthropic]"` enables Claude tiers.
+
+### Run artifacts
+
+| File | Contents |
+|---|---|
+| `report.md` | Narrative plus ledger, metrics and the expectation-verdict tally |
+| `ledger.json` | One entry per iteration: design, expectations, verdicts, counts, KEEPER |
+| `llm_events.jsonl` | Every prompt, response, token usage and latency |
+| `tool_calls.jsonl` | Every MCP call with arguments and result |
+| `design_<n>.json`, `cohort_<n>.R` | Per-iteration design and generated Capr |
+| `final_cohort.json` | `convertCaprToJson` output, written unread by design |
 
 ## Agent documentation
 

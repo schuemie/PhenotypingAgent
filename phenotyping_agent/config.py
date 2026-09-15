@@ -97,12 +97,20 @@ def build_config(
     if max_iterations is not None:
         budgets.design_iterations = max_iterations
 
-    # Load from CLI args or environment variables
-    reasoning_provider = reasoning_tier_provider or os.getenv("REASONING_TIER_PROVIDER", "none")
-    reasoning_model = reasoning_tier_model or os.getenv("REASONING_TIER_MODEL", "reasoning-dry-run")
-
-    fast_provider = fast_tier_provider or os.getenv("FAST_TIER_PROVIDER", "none")
-    fast_model = fast_tier_model or os.getenv("FAST_TIER_MODEL", "fast-dry-run")
+    # Load from CLI args or environment variables. In dry-run mode the environment is ignored
+    # unless a tier was passed explicitly: a fixture-backed run must be hermetic, and inheriting
+    # an ambient provider together with the placeholder model name below would otherwise send a
+    # real (and doomed) network request.
+    if dry_run:
+        reasoning_provider = reasoning_tier_provider or "none"
+        reasoning_model = reasoning_tier_model or "reasoning-dry-run"
+        fast_provider = fast_tier_provider or "none"
+        fast_model = fast_tier_model or "fast-dry-run"
+    else:
+        reasoning_provider = reasoning_tier_provider or os.getenv("REASONING_TIER_PROVIDER", "none")
+        reasoning_model = reasoning_tier_model or os.getenv("REASONING_TIER_MODEL", "reasoning-dry-run")
+        fast_provider = fast_tier_provider or os.getenv("FAST_TIER_PROVIDER", "none")
+        fast_model = fast_tier_model or os.getenv("FAST_TIER_MODEL", "fast-dry-run")
 
     return AppConfig(
         project_root=project_root,

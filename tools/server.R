@@ -118,9 +118,14 @@ ensureCohortExists <- function(json) {
   sql <- CirceR::buildCohortQuery(expression, CirceR::createGenerateOptions(generateStats = TRUE))
   
   cohortTableNames <- CohortGenerator::getCohortTableNames(cohortTable)
-  if (DatabaseConnector::existsTable(connectionPool, cohortDatabaseSchema, cohortTable)) {
+  
+  # Cannot call DatabaseConnector::existsTable() on a connection pool object for some reason
+  connection <- pool::poolCheckout(connectionPool)
+  on.exit(pool::poolReturn(connection))
+  
+  if (DatabaseConnector::existsTable(connection, cohortDatabaseSchema, cohortTable)) {
     existingCohorts <- DatabaseConnector::renderTranslateQuerySql(
-      connection = connectionPool,
+      connection = connection,
       sql = "SELECT cohort_definition_id, checksum FROM @cohort_database_schema.@table;",
       cohort_database_schema = cohortDatabaseSchema,
       table = cohortTableNames$cohortChecksumTable,
@@ -137,7 +142,7 @@ ensureCohortExists <- function(json) {
     }
   } else {
     CohortGenerator::createCohortTables(
-      connection = connectionPool,
+      connection = connection,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortTableNames = cohortTableNames
     )
@@ -151,7 +156,7 @@ ensureCohortExists <- function(json) {
   )
   runQuietly(
     CohortGenerator::generateCohortSet(
-      connection = connectionPool,
+      connection = connection,
       cdmDatabaseSchema = cdmDatabaseSchema,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortTableNames = cohortTableNames,
@@ -161,7 +166,7 @@ ensureCohortExists <- function(json) {
   )
   runQuietly(
     CohortGenerator::insertInclusionRuleNames(
-      connection = connectionPool,
+      connection = connection,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortDefinitionSet = cohortDefinitionSet,
       cohortInclusionTable = cohortTableNames$cohortInclusionTable
@@ -379,7 +384,7 @@ getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_co
     phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
     concept_set_expression_plus_table = conceptSetExpressionsPlusTable,
     phenotype = tolower(phenotype),
-    concept_set_names = paste(tolower(conceptSetNames), collapse = "', '"),
+    concept_set_names = paste(tolower(gsub("'", "''", conceptSetNames)), collapse = "', '"),
     snakeCaseToCamelCase = TRUE
   )
   caprWithReference <- conceptSets |>

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from phenotyping_agent.mcp_tools import ToolFacade
+from phenotyping_agent.deps import NodeDeps
 from phenotyping_agent.state import AgentState, ConceptSetSummary
 
 
@@ -20,9 +20,12 @@ def _parse_table(table_text: str) -> list[ConceptSetSummary]:
     return summaries
 
 
-def run(state: AgentState, tools: ToolFacade) -> AgentState:
-    table = tools.list_concept_sets(state["phenotype"])
-    state["available_concept_sets"] = _parse_table(str(table))
-    state["database_description"] = str(tools.get_database_description("default"))
-    return state
+def run(state: AgentState, deps: NodeDeps) -> dict:
+    with deps.tools.restrict_to({"listConceptSets", "getDatabaseDescription"}):
+        table = deps.tools.list_concept_sets(state["phenotype"])
+        description = deps.tools.get_database_description("default")
+    return {
+        "available_concept_sets": _parse_table(str(table)),
+        "database_description": str(description),
+    }
 

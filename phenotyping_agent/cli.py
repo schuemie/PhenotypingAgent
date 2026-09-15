@@ -42,8 +42,16 @@ def run(
         None,
         help="Model name for fast tier (e.g., 'gpt-4o-mini', 'claude-3-5-haiku-20241022')."
     ),
+    resume: bool = typer.Option(
+        False,
+        "--resume",
+        help="Resume an interrupted run from its checkpoint. Requires --run-id and the "
+             "langgraph-checkpoint-sqlite package.",
+    ),
 ) -> None:
     project_root = Path(__file__).resolve().parents[1]
+    if resume and not run_id:
+        raise typer.BadParameter("--resume requires --run-id of the interrupted run.")
     config = build_config(
         project_root=project_root,
         clinical_definition_path=(project_root / clinical_definition),
@@ -56,9 +64,11 @@ def run(
         fast_tier_provider=fast_tier_provider,
         fast_tier_model=fast_tier_model,
     )
-    state = AgentRunner(config).run()
+    state = AgentRunner(config).run(resume=resume)
     console.print(f"Run complete. Report: [bold]{config.runs_dir / 'report.md'}[/bold]")
     console.print(f"Final action: {state['next_action']}")
+    if state.get("stop_reason"):
+        console.print(f"Stop reason: {state['stop_reason']}")
 
 
 @app.command("list-tools")

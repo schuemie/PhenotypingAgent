@@ -9,8 +9,8 @@ class _FakeRunner:
     def __init__(self, config) -> None:
         self.config = config
 
-    def run(self):
-        return {"next_action": "done", "final_report": "ok"}
+    def run(self, resume: bool = False):
+        return {"next_action": "done", "final_report": "ok", "stop_reason": None}
 
 
 runner = CliRunner()
