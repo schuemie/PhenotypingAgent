@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import time
+from uuid import uuid4
 from typing import TYPE_CHECKING, Any
 
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
@@ -11,6 +13,7 @@ if TYPE_CHECKING:
     from langchain_core.language_model import BaseLanguageModel
 
 from phenotyping_agent.config import ModelTier
+from phenotyping_agent.llm_events import LLMEventLogger, extract_text, extract_usage
 
 
 def _get_openai_client(tier: ModelTier) -> Any:
@@ -135,6 +138,60 @@ def get_llm_client(tier: ModelTier) -> Any:
             f"Unknown LLM provider: {tier.provider}. "
             "Supported: 'openai', 'azure_openai', 'anthropic'"
         )
+
+
+def invoke_with_logging(
+    client: Any,
+    messages: Any,
+    *,
+    event_logger: LLMEventLogger,
+    tier: ModelTier,
+    node: str,
+    prompt_template: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> Any:
+    """Invoke an LLM client and append request/response details to llm_events.jsonl."""
+    request_id = str(uuid4())
+    started_at = time.perf_counter()
+    base_event = {
+        "event": "llm_response",
+        "request_id": request_id,
+        "provider": tier.provider,
+        "model": tier.model,
+        "node": node,
+        "prompt_template": prompt_template,
+        "metadata": metadata or {},
+        "input_text": extract_text(messages),
+    }
+    try:
+        response = client.invoke(messages)
+    except Exception as exc:
+        event_logger.append(
+            {
+                **base_event,
+                "event": "llm_error",
+                "latency_ms": int((time.perf_counter() - started_at) * 1000),
+                "error": str(exc),
+            }
+        )
+        raise
+
+    response_metadata = getattr(response, "response_metadata", None)
+    finish_reason = None
+    if isinstance(response_metadata, dict):
+        finish_reason = response_metadata.get("finish_reason")
+    event_logger.append(
+        {
+            **base_event,
+            "latency_ms": int((time.perf_counter() - started_at) * 1000),
+            "output_text": extract_text(response),
+            "usage": extract_usage(response),
+            "finish_reason": finish_reason,
+            "error": None,
+        }
+    )
+    return response
+
 
 
 

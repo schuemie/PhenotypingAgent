@@ -10,7 +10,7 @@
 #
 # Currently requires develop version of Capr: remotes::install_github("ohdsi/Capr", ref = "develop")
 
-
+message("Starting MCP server")
 
 requiredPackages <- c("mcptools",
                       "ellmer",
@@ -23,14 +23,13 @@ requiredPackages <- c("mcptools",
                       "ParallelLogger",
                       "jsonlite",
                       "SqlRender",
-                      "keyring")
+                      "keyring",
+                      "pool")
 missingPackages <- requiredPackages[!(requiredPackages %in% installed.packages()[,"Package"])]
 if(length(missingPackages) > 0) {
   stop("Missing packages: ", paste(missingPackages, collapse = ", "))
 }
 
-warning("Starting MCP server")
-message("Trying a message")
 library(dplyr, quietly = TRUE, warn.conflicts = FALSE)
 library(ellmer)
 library(mcptools)
@@ -82,6 +81,12 @@ llmClient4o <- ellmer::chat_azure_openai(
 newConceptSetsFolder <- "newConceptSets"
 
 # Support functions and global variables -------------------------------------------------------------------------------
+connectionPool <- pool::poolCreate(
+  factory = function() {
+    DatabaseConnector::connect(connectionDetails)
+  }
+)
+
 normalizeName <- function(name) {
   return(gsub("[^[:alnum:]]", "", tolower(name)))
 }
@@ -108,14 +113,14 @@ runQuietly <- function(expr) {
 standardConceptSets <- readRDS("tools/StandardConceptSets.rds")
 
 # Returns the cohort ID:
-ensureCohortExists <- function(json, connection) {
+ensureCohortExists <- function(json) {
   expression <- CirceR::cohortExpressionFromJson(json)
   sql <- CirceR::buildCohortQuery(expression, CirceR::createGenerateOptions(generateStats = TRUE))
   
   cohortTableNames <- CohortGenerator::getCohortTableNames(cohortTable)
-  if (DatabaseConnector::existsTable(connection, cohortDatabaseSchema, cohortTable)) {
+  if (DatabaseConnector::existsTable(connectionPool, cohortDatabaseSchema, cohortTable)) {
     existingCohorts <- DatabaseConnector::renderTranslateQuerySql(
-      connection = connection,
+      connection = connectionPool,
       sql = "SELECT cohort_definition_id, checksum FROM @cohort_database_schema.@table;",
       cohort_database_schema = cohortDatabaseSchema,
       table = cohortTableNames$cohortChecksumTable,
@@ -132,7 +137,7 @@ ensureCohortExists <- function(json, connection) {
     }
   } else {
     CohortGenerator::createCohortTables(
-      connection = connection,
+      connection = connectionPool,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortTableNames = cohortTableNames
     )
@@ -146,7 +151,7 @@ ensureCohortExists <- function(json, connection) {
   )
   runQuietly(
     CohortGenerator::generateCohortSet(
-      connection = connection,
+      connection = connectionPool,
       cdmDatabaseSchema = cdmDatabaseSchema,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortTableNames = cohortTableNames,
@@ -156,7 +161,7 @@ ensureCohortExists <- function(json, connection) {
   )
   runQuietly(
     CohortGenerator::insertInclusionRuleNames(
-      connection = connection,
+      connection = connectionPool,
       cohortDatabaseSchema = cohortDatabaseSchema,
       cohortDefinitionSet = cohortDefinitionSet,
       cohortInclusionTable = cohortTableNames$cohortInclusionTable
@@ -203,7 +208,7 @@ compileCaprConceptSetsViaWorker <- function(caprCode, timeoutSeconds = 60) {
   )
 }
 
-ensureConceptSetTablesExist <- function(connection) {
+ensureConceptSetTablesExist <- function() {
   sql <- "
     CREATE TABLE IF NOT EXISTS @cohort_database_schema.@definition_table (
       concept_set_hash STRING,
@@ -217,7 +222,7 @@ ensureConceptSetTablesExist <- function(connection) {
     );
   "
   DatabaseConnector::renderTranslateExecuteSql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     cohort_database_schema = cohortDatabaseSchema,
     definition_table = conceptSetDefinitionTable,
@@ -231,8 +236,8 @@ quoteSqlString <- function(value) {
   paste0("'", gsub("'", "''", value, fixed = TRUE), "'")
 }
 
-ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
-  ensureConceptSetTablesExist(connection)
+ensureConceptSetsExist <- function(conceptSetsToCreate) {
+  ensureConceptSetTablesExist()
   conceptSetsToCreate$conceptSetHash <- vapply(
     conceptSetsToCreate$json,
     CohortGenerator::computeChecksum,
@@ -240,7 +245,7 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
   )
   
   existingHashes <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = "SELECT concept_set_hash FROM @cohort_database_schema.@definition_table;",
     cohort_database_schema = cohortDatabaseSchema,
     definition_table = conceptSetDefinitionTable,
@@ -278,7 +283,7 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
         VALUES (source.concept_set_hash, source.concept_set_name, source.concept_set_json);
     "
     DatabaseConnector::renderTranslateExecuteSql(
-      connection = connection,
+      connection = connectionPool,
       sql = sql,
       cohort_database_schema = cohortDatabaseSchema,
       concept_set_table = conceptSetTable,
@@ -297,14 +302,14 @@ ensureConceptSetsExist <- function(conceptSetsToCreate, connection) {
   return(conceptSetsToCreate)
 }
 
-getKeeperReferenceCohortId <- function(phenotype, connection) {
+getKeeperReferenceCohortId <- function(phenotype) {
   sql <- "
     SELECT cohort_definition_id
     FROM @database_schema.@table
     WHERE LOWER(phenotype) = LOWER('@phenotype');
   "
   keeperReference <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     database_schema = referenceCohortDatabaseSchema,
     table = Keeper::createReferenceCohortTableNames(referenceCohortTable)$referenceCohortMetadataTable,
@@ -319,9 +324,6 @@ getKeeperReferenceCohortId <- function(phenotype, connection) {
 
 # Tool functions --------------------------------------------------------------------------------------------------------
 listConceptSets <- function(phenotype) {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
   sql <- "
     SELECT DISTINCT concept_set_expression.*
     FROM @database_schema.@concept_set_expression_plus_table concept_set_expression
@@ -331,7 +333,7 @@ listConceptSets <- function(phenotype) {
     WHERE LOWER(phenotype) = LOWER('@phenotype');
   "
   conceptSets <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     database_schema = conceptSetDatabaseSchema,
     phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
@@ -358,8 +360,6 @@ listConceptSets <- function(phenotype) {
 }
 
 getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_counts") {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
   if (!detail %in% c("code", "code_and_counts", "full_reference")) {
     stop("The detail argument should be 'code', 'code_and_counts', or 'full_reference'")
   }
@@ -373,7 +373,7 @@ getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_co
       AND LOWER(concept_set_expression.concept_set_name) IN ('@concept_set_names');
   "
   conceptSets <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     database_schema = conceptSetDatabaseSchema,
     phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
@@ -429,10 +429,7 @@ validateCapr <- function(caprCode) {
 
 convertCaprToJson <- function(caprCode) {
   json <- compileCaprViaWorker(caprCode)
-  
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
+
   conceptIds <- stringr::str_match_all(json, '"CONCEPT_ID"\\s*:\\s*(\\d+)')[[1]][, 2] 
   conceptIds <- unique(as.integer(conceptIds))
   sql <- "
@@ -441,7 +438,7 @@ convertCaprToJson <- function(caprCode) {
     WHERE concept_id IN (@concept_ids);
   "
   concepts <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     cdm_database_schema = cdmDatabaseSchema,
     concept_ids = conceptIds
@@ -466,25 +463,18 @@ convertCaprToJson <- function(caprCode) {
 
 generateCohort <- function(caprCode) {
   json <- compileCaprViaWorker(caprCode)
-  
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))   
-  
-  cohortId <- ensureCohortExists(json, connection)
+  cohortId <- ensureCohortExists(json)
   return(cohortId)
 }
 
 getCohortCount <- function(cohortId) {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
   sql <- "
       SELECT * 
       FROM @cohort_database_schema.@table 
       WHERE cohort_definition_id = @cohort_id;
     "
   inclusionRules <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     cohort_database_schema = cohortDatabaseSchema,
     table = CohortGenerator::getCohortTableNames(cohortTable)$cohortInclusionTable,
@@ -499,7 +489,7 @@ getCohortCount <- function(cohortId) {
       WHERE cohort_definition_id = @cohort_id;
     "
     inclusionResults <- DatabaseConnector::renderTranslateQuerySql(
-      connection = connection,
+      connection = connectionPool,
       sql = sql,
       cohort_database_schema = cohortDatabaseSchema,
       table = CohortGenerator::getCohortTableNames(cohortTable)$cohortInclusionResultTable,
@@ -507,7 +497,7 @@ getCohortCount <- function(cohortId) {
       snakeCaseToCamelCase = TRUE
     )
     cohortInclusionStats <- DatabaseConnector::renderTranslateQuerySql(
-      connection = connection,
+      connection = connectionPool,
       sql = sql,
       cohort_database_schema = cohortDatabaseSchema,
       table = CohortGenerator::getCohortTableNames(cohortTable)$cohortInclusionStatsTable,
@@ -541,7 +531,7 @@ getCohortCount <- function(cohortId) {
       WHERE cohort_definition_id = @cohort_id;
     "    
     counts <- DatabaseConnector::renderTranslateQuerySql(
-      connection = connection,
+      connection = connectionPool,
       sql = sql,
       cohort_database_schema = cohortDatabaseSchema,
       cohort_table = cohortTable,
@@ -622,9 +612,7 @@ countConceptSetPersonOverlap <- function(
     stop("Each concept set must have a non-empty, unique name")
   }
   
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  conceptSetsToCount <- ensureConceptSetsExist(conceptSetsToCount, connection)
+  conceptSetsToCount <- ensureConceptSetsExist(conceptSetsToCount)
   
   requestedConceptSets <- paste(
     sprintf(
@@ -782,7 +770,7 @@ countConceptSetPersonOverlap <- function(
     ORDER BY requested.input_order, window.window_order;
   "
   counts <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     requested_concept_sets = requestedConceptSets,
     requested_windows = requestedWindows,
@@ -807,9 +795,7 @@ describeMeasurementValues <- function(caprCode) {
     stop("Each concept set must have a non-empty, unique name")
   }
   
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  conceptSetsToDescribe <- ensureConceptSetsExist(conceptSetsToDescribe, connection)
+  conceptSetsToDescribe <- ensureConceptSetsExist(conceptSetsToDescribe)
   
   requestedConceptSets <- paste(
     sprintf(
@@ -902,7 +888,7 @@ describeMeasurementValues <- function(caprCode) {
     ORDER BY unit_counts.input_order, unit_counts.measurement_count DESC;
   "
   descriptives <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     requested_concept_sets = requestedConceptSets,
     cohort_database_schema = cohortDatabaseSchema,
@@ -917,9 +903,6 @@ describeMeasurementValues <- function(caprCode) {
 }
 
 computeIncidenceRate <- function(cohortId) {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
   sql <- "
     WITH first_entry AS (
       SELECT subject_id AS person_id,
@@ -990,7 +973,7 @@ computeIncidenceRate <- function(cohortId) {
     ORDER BY stratum, stratum_order, stratum_name;
   "
   rates <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     cohort_database_schema = cohortDatabaseSchema,
     cohort_table = cohortTable,
@@ -1011,13 +994,10 @@ computeIncidenceRate <- function(cohortId) {
 }
 
 evaluateCohort <- function(cohortId, phenotype) {
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
-  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype, connection)
+  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype)
   
   metrics <- Keeper::computeCohortOperatingCharacteristics(
-    connection = connection,     
+    connection = connectionPool,     
     cohortDatabaseSchema = cohortDatabaseSchema,
     cohortTable = cohortTable,
     cohortDefinitionId = cohortId,
@@ -1043,11 +1023,8 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
   if (!type %in% c("tp", "fp", "tn", "fn")) {
     return("Error: type must have value 'TP', 'FP', 'TN', or 'FN'")
   }
-  
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  
-  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype, connection)
+
+  referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype)
   
   sql <- "
     SELECT CAST(subject_id AS VARCHAR) AS subject_id
@@ -1084,7 +1061,7 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
     {@type == 'fn'} ? {WHERE is_case = 1 AND has_match = 0;}
   "
   personIds <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     reference_cohort_database_schema = referenceCohortDatabaseSchema,
     reference_cohort_table = referenceCohortTable,
@@ -1107,7 +1084,7 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
       AND cohort_definition_id = @reference_cohort_definition_id;
   "
   profile <- DatabaseConnector::renderTranslateQuerySql(
-    connection = connection,
+    connection = connectionPool,
     sql = sql,
     reference_cohort_database_schema = referenceCohortDatabaseSchema,
     reference_cohort_profiles_table = referenceCohortProfilesTable,
@@ -1126,31 +1103,23 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
 
 createNewConceptSet <- function(name, description) {
   outputFolder <- file.path(newConceptSetsFolder, gsub("[^[:alnum:]]", "", name))
-  results <- Phenelope::createConceptSet(
+  json <- Phenelope::createConceptSet(
     conceptName = name,
-    additionalInformation = description,
+    clinicalDefinition = description,
     connectionDetails = connectionDetails,
     cdmDatabaseSchema = cdmDatabaseSchema,
-    llmClientReasoning = llmClientO3,
-    llmClientNonReasoning = llmClient4o,
-    outputDirectory = outputFolder
+    llmClient = llmClientO3
   )
-  json <- as.character(jsonlite::toJSON(results$conceptSet, auto_unbox = TRUE))
   sql <- CirceR::buildConceptSetQuery(json)
-  connection <- DatabaseConnector::connect(connectionDetails)
-  on.exit(DatabaseConnector::disconnect(connection))
-  counts <- getCounts(sql, connection, cdmDatabaseSchema)
+  counts <- getCounts(sql, connectionPool, cdmDatabaseSchema)
   capr <- jsonToCaprWithReference(json, name)
   result <- bind_cols(
     capr |>
       select(capr),
     counts
   )
-  saveRDS(result, file.path(outputFolder, "mcpResult.rds"))
   resultJson <- jsonlite::toJSON(result, auto_unbox = TRUE, pretty = TRUE)
-  
   resultJson <- gsub(",\n  }", "\n  }", gsub('\n[^:]+Persons": 0,?', "", resultJson))
-  
   return(resultJson)
 }
 
@@ -1358,3 +1327,5 @@ mcp_server(
   ),
   session_tools = FALSE
 )
+
+connectionPool$close()

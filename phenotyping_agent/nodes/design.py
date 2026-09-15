@@ -5,7 +5,7 @@ from phenotyping_agent.state import AgentState, Design, Expectation
 
 
 def run(state: AgentState, tools: ToolFacade) -> AgentState:
-    concept_names = [c.concept_set_name for c in state["available_concept_sets"][:3]]
+    concept_names = [c.concept_set_name for c in state["available_concept_sets"]]
     if not concept_names:
         concept_names = ["Acute liver failure"]
 
