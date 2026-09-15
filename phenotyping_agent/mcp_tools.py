@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
+from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -124,16 +126,48 @@ class LiveToolClient:
     def __init__(self, mcp_config_path: Path, project_root: Path) -> None:
         self.connections = load_mcp_connections(mcp_config_path, project_root)
         self.client = MultiServerMCPClient(self.connections, tool_name_prefix=False)
-        self.tools_by_name = self._load_tools()
+        self.tools_by_name: dict[str, str] = {}
+        self._event_loop: asyncio.AbstractEventLoop | None = None
+        self._exit_stack: AsyncExitStack | None = None
+        self._sessions: dict[str, Any] = {}
+        self._initialize_client_sync()
 
-    def _load_tools(self) -> dict[str, Any]:
-        tools = asyncio.run(self.client.get_tools())
-        mapped: dict[str, Any] = {}
-        for tool in tools:
-            if tool.name in mapped:
-                raise RuntimeError(f"Duplicate MCP tool name detected: {tool.name}")
-            mapped[tool.name] = tool
-        return mapped
+    def _get_event_loop(self) -> asyncio.AbstractEventLoop:
+        """Get or create a persistent event loop for the MCP client connection."""
+        if self._event_loop is None or self._event_loop.is_closed():
+            try:
+                self._event_loop = asyncio.get_event_loop()
+                if self._event_loop.is_closed():
+                    self._event_loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(self._event_loop)
+            except RuntimeError:
+                self._event_loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(self._event_loop)
+        return self._event_loop
+
+    async def _initialize_client_async(self) -> None:
+        """Initialize MCP sessions and index tools while keeping sessions open."""
+        self._exit_stack = AsyncExitStack()
+        await self._exit_stack.__aenter__()
+
+        for server_name in self.connections.keys():
+            session = await self._exit_stack.enter_async_context(self.client.session(server_name))
+            self._sessions[server_name] = session
+            cursor: str | None = None
+            while True:
+                listed = await session.list_tools(cursor=cursor)
+                for tool in listed.tools:
+                    if tool.name in self.tools_by_name:
+                        raise RuntimeError(f"Duplicate MCP tool name detected: {tool.name}")
+                    self.tools_by_name[tool.name] = server_name
+                cursor = listed.nextCursor
+                if not cursor:
+                    break
+
+    def _initialize_client_sync(self) -> None:
+        """Initialize client using the persistent event loop."""
+        loop = self._get_event_loop()
+        loop.run_until_complete(self._initialize_client_async())
 
     def list_tools(self) -> set[str]:
         return set(self.tools_by_name.keys())
@@ -159,14 +193,53 @@ class LiveToolClient:
             return merged
 
     def call_tool(self, name: str, args: dict[str, Any]) -> Any:
-        tool = self.tools_by_name.get(name)
-        if tool is None:
+        server_name = self.tools_by_name.get(name)
+        if server_name is None:
             raise RuntimeError(f"Unknown MCP tool '{name}'")
-        result = asyncio.run(tool.ainvoke(args))
-        if hasattr(result, "content"):
-            content = result.content
-            return self._normalize_text_blocks(content)
-        return self._normalize_text_blocks(result)
+        session = self._sessions.get(server_name)
+        if session is None:
+            raise RuntimeError(f"No active MCP session for server '{server_name}'")
+        loop = self._get_event_loop()
+        result = loop.run_until_complete(session.call_tool(name=name, arguments=args))
+        if getattr(result, "isError", False):
+            content = self._normalize_text_blocks(getattr(result, "content", None))
+            raise RuntimeError(f"MCP tool '{name}' failed: {content}")
+        structured = getattr(result, "structuredContent", None)
+        if structured is not None:
+            return structured
+        return self._normalize_text_blocks(getattr(result, "content", result))
+
+    async def _cleanup_async(self) -> None:
+        """Clean up all sessions."""
+        if self._exit_stack is not None:
+            try:
+                await self._exit_stack.__aexit__(None, None, None)
+            except Exception:
+                # Some transports can only be exited from their original task.
+                # Keep shutdown best-effort; process exit will clean up subprocesses.
+                pass
+            self._exit_stack = None
+
+    def close(self) -> None:
+        """Close all active MCP sessions explicitly."""
+        loop = self._event_loop
+        if loop is None or loop.is_closed() or self._exit_stack is None:
+            return
+        try:
+            loop.run_until_complete(self._cleanup_async())
+        except Exception:
+            self._exit_stack = None
+
+    def __del__(self) -> None:
+        """Clean up sessions when the client is destroyed."""
+        if sys.is_finalizing():
+            return
+        loop = self._event_loop
+        if loop is not None and not loop.is_closed() and self._exit_stack is not None:
+            try:
+                self.close()
+            except Exception:
+                pass
 
 
 class ToolFacade:
@@ -183,6 +256,14 @@ class ToolFacade:
             else LiveToolClient(config.mcp_config_path, config.project_root)
         )
         self._assert_toolset()
+
+    def close(self) -> None:
+        closer = getattr(self.client, "close", None)
+        if callable(closer):
+            try:
+                closer()
+            except Exception:
+                pass
 
     def _assert_toolset(self) -> None:
         found = self.client.list_tools()

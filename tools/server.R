@@ -30,6 +30,7 @@ if(length(missingPackages) > 0) {
 }
 
 warning("Starting MCP server")
+message("Trying a message")
 library(dplyr, quietly = TRUE, warn.conflicts = FALSE)
 library(ellmer)
 library(mcptools)
