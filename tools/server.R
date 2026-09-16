@@ -1001,8 +1001,12 @@ computeIncidenceRate <- function(cohortId) {
 evaluateCohort <- function(cohortId, phenotype) {
   referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype)
   
+  # Cannot call Keeper::computeCohortOperatingCharacteristics() on a connection pool
+  connection <- pool::poolCheckout(connectionPool)
+  on.exit(pool::poolReturn(connection))
+  
   metrics <- Keeper::computeCohortOperatingCharacteristics(
-    connection = connectionPool,     
+    connection = connection,     
     cohortDatabaseSchema = cohortDatabaseSchema,
     cohortTable = cohortTable,
     cohortDefinitionId = cohortId,

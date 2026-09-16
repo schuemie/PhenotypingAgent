@@ -149,15 +149,30 @@ class LLMRuntime:
         turns = list(messages)
         last_error = "unknown parsing failure"
         for attempt in range(max_retries + 1):
-            result = self._invoke(
-                runnable,
-                turns,
-                tier=tier,
-                node=node,
-                prompt_template=prompt_template,
-                metadata={**(metadata or {}), "schema": schema.__name__, "attempt": attempt},
-                raw_of=lambda value: value.get("raw") if isinstance(value, dict) else value,
-            )
+            try:
+                result = self._invoke(
+                    runnable,
+                    turns,
+                    tier=tier,
+                    node=node,
+                    prompt_template=prompt_template,
+                    metadata={**(metadata or {}), "schema": schema.__name__, "attempt": attempt},
+                    raw_of=lambda value: value.get("raw") if isinstance(value, dict) else value,
+                )
+            except Exception as exc:  # noqa: BLE001 - fed back to the model for repair
+                last_error = str(exc)
+                turns = [
+                    *turns,
+                    AIMessage(content=f"Structured output was rejected: {last_error}"),
+                    HumanMessage(
+                        content=(
+                            "Your previous response did not satisfy the required schema "
+                            f"`{schema.__name__}`. Error:\n{last_error}\n"
+                            "Return a corrected response that satisfies the schema exactly."
+                        )
+                    ),
+                ]
+                continue
             parsed = result.get("parsed") if isinstance(result, dict) else result
             error = result.get("parsing_error") if isinstance(result, dict) else None
             if isinstance(parsed, schema) and error is None:

@@ -25,6 +25,21 @@ class _FakeStructuredRunnable:
         return self.results.pop(0)
 
 
+class _RaisingStructuredRunnable:
+    def __init__(self, exc: Exception, result: dict) -> None:
+        self.exc = exc
+        self.result = result
+        self.calls: list[list] = []
+        self._raised = False
+
+    def invoke(self, messages):
+        self.calls.append(list(messages))
+        if not self._raised:
+            self._raised = True
+            raise self.exc
+        return self.result
+
+
 class _FakeClient:
     def __init__(self, results: list[dict]) -> None:
         self.runnable = _FakeStructuredRunnable(results)
@@ -63,6 +78,28 @@ def test_structured_retries_and_repairs_after_validation_error() -> None:
     assert len(client.runnable.calls) == 2, "the failure should have triggered exactly one repair"
     repair_prompt = client.runnable.calls[1][-1].content
     assert "_Answer" in repair_prompt and "missing value" in repair_prompt
+
+
+def test_structured_retries_after_hard_validation_exception() -> None:
+    runtime = LLMRuntime(make_config("test_runtime_hard_validation_retry"))
+    client = _FakeClient([])
+    client.runnable = _RaisingStructuredRunnable(
+        ValueError("numeric clinically reasoned claims must use claim_kind='magnitude_band'"),
+        {"raw": AIMessage(content="{}"), "parsed": _Answer(value=11), "parsing_error": None},
+    )
+    runtime._clients[(TIER.provider, TIER.model)] = client
+
+    result = runtime.structured(
+        tier=TIER,
+        node="unit",
+        messages=[HumanMessage(content="go")],
+        schema=_Answer,
+    )
+
+    assert isinstance(result, _Answer) and result.value == 11
+    assert len(client.runnable.calls) == 2, "the exception should have triggered a repair retry"
+    repair_prompt = client.runnable.calls[1][-1].content
+    assert "_Answer" in repair_prompt and "magnitude_band" in repair_prompt
 
 
 def test_structured_raises_once_retries_are_exhausted() -> None:
