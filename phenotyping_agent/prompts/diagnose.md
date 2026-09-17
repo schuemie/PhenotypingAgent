@@ -16,3 +16,24 @@ the sampled patient profiles below.
    support a mechanism, say so in the summary and return no failure modes.
 5. Only three KEEPER evaluations are permitted per run. Propose changes worth spending one on.
 
+## Output
+
+After any tool use, return the final response as a `DiagnoseOutput` in valid JSON only, with this exact structure:
+
+```json
+{
+  "summary": "string",
+  "failure_modes": [
+    {
+      "pattern": "string",
+      "evidence_person_count": 0,
+      "mechanism": "string",
+      "proposed_design_change": "string",
+      "expected_metric_effect": "string"
+    }
+  ]
+}
+```
+
+If the profiles do not support a mechanism, say so in `summary` and return an empty
+`failure_modes` array.

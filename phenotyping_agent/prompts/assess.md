@@ -30,3 +30,27 @@ diagnostics were run. You made those predictions yourself; grade them honestly.
 Anti-overfitting rule: reject any change that merely enumerates person-level quirks seen in
 sampled patient profiles. A proposed change must cite a clinical or data-capture mechanism.
 
+## Output
+
+After any tool use, return the final response as an `AssessOutput` in valid JSON only, with this exact structure:
+
+```json
+{
+  "verdicts": [
+    {
+      "expectation_index": 0,
+      "observed": "string",
+      "verdict": "held|violated|uninformative",
+      "reasoning": "string"
+    }
+  ],
+  "interpretation": "string",
+  "attrition_mechanisms": ["string"],
+  "readiness_rationale": "string",
+  "next_action": "iterate|evaluate|done"
+}
+```
+
+Return one verdict per registered expectation index. Use `uninformative` whenever the diagnostic did
+not truly test the claim.
+

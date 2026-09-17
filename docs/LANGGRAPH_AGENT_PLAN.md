@@ -23,7 +23,7 @@ remote `ohdsi_hecate` server. No human in the loop.
 
 | # | Decision |
 |---|---|
-| 1 | Deterministic phase skeleton with LLM nodes producing structured output. Budgets, loops and the 3-evaluation cap are enforced in code, not by prompt compliance. |
+| 1 | Deterministic phase skeleton with LLM nodes producing structured output. Budgets, loops and the 3-evaluation cap are enforced in code, not by prompt compliance. Prompt schemas document the final structured response after tool use, not the exploratory tool-call phase. |
 | 2 | Nine nodes, with design (prose/spec) strictly separated from Capr code generation. |
 | 3 | Structured pydantic ledger held in state, rendered into every LLM prompt. |
 | 4 | Hard budgets on design iterations, Capr repairs, KEEPER evaluations, profiles, wall clock and cost. |

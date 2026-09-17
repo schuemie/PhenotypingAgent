@@ -21,6 +21,9 @@ def _parse_table(table_text: str) -> list[ConceptSetSummary]:
 
 
 def run(state: AgentState, deps: NodeDeps) -> dict:
+    """
+    List the available concept sets and get the database description.
+    """
     with deps.tools.restrict_to({"listConceptSets", "getDatabaseDescription"}):
         table = deps.tools.list_concept_sets(state["phenotype"])
         description = deps.tools.get_database_description("default")

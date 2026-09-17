@@ -20,7 +20,7 @@ from phenotyping_agent.deps import NodeDeps
 from phenotyping_agent.llm_runtime import load_prompt
 from phenotyping_agent.state import AgentState, DesignOutput, Expectation
 
-MAX_TOOL_TURNS = 6
+MAX_TOOL_TURNS = 12
 DESIGN_TOOL_ALLOWLIST = {
     "getConceptSetsCapr",
     "describeMeasurementValues",
@@ -177,6 +177,9 @@ def _missing_required(expectations: list[Expectation]) -> list[str]:
 
 
 def run(state: AgentState, deps: NodeDeps) -> dict:
+    """
+    The `design` node: an LLM reasoning step with a bounded diagnostic tool sub-loop.
+    """
     iteration = int(state.get("iteration", 0)) + 1
     stub_state = cast(AgentState, {**state, "iteration": iteration})
     facade = deps.tools

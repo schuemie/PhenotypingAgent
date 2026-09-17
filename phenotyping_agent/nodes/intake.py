@@ -22,11 +22,9 @@ def _heuristic_name(clinical_definition: str) -> str:
 
 
 def run(state: AgentState, deps: NodeDeps) -> dict:
-    """Load the clinical definition.
-
-    Hard-fails when the definition is missing: SKILL.md requires the interactive
-    `clinical-definition-refiner` in that case, which is impossible unattended, and forbids
-    inventing clinical criteria. Deriving the phenotype *name* is allowed.
+    """
+    Load the clinical definition. Hard-fails when the definition is missing. Deriving the phenotype *name* when not
+    provided.
     """
     definition_path = Path(deps.config.clinical_definition_path)
     if not definition_path.exists():

@@ -47,7 +47,7 @@ for every LLM node, so the full flow runs with no database, MCP or model connect
 Configure both model tiers, then run without `--dry-run`:
 
 ```powershell
-python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt"
+python -m phenotyping_agent.cli run --phenotype "Acute liver failure" --clinical-definition "acute liver failure.txt"
 ```
 
 Tiers can also come from `REASONING_TIER_PROVIDER` / `REASONING_TIER_MODEL` /

@@ -71,6 +71,10 @@ real network request from a supposedly offline run.
    concept ID that is not in a registry snippet, and the error is fed back as a repair turn.
 5. Anti-overfitting: `diagnose` drops failure modes with no stated mechanism.
 6. Per-node tool allow-lists via `ToolFacade.restrict_to`.
+7. Prompt schemas describe the **final structured response after tool use** (for example,
+   `DesignOutput`, `AssessOutput`, `DiagnoseOutput`). The exploratory tool-call phase is
+   unconstrained by that schema and is still governed by the tool allow-lists and code checks
+   above.
 
 ## Milestone status against `docs/LANGGRAPH_AGENT_PLAN.md`
 

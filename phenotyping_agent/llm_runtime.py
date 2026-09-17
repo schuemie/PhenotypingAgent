@@ -43,6 +43,13 @@ class StubbedTierError(RuntimeError):
 
 class LLMRuntime:
     def __init__(self, config: AppConfig, event_logger: LLMEventLogger | None = None) -> None:
+        """Initialize the LLM runtime.
+
+        Args:
+            config: Application configuration containing model tier settings and paths.
+            event_logger: Optional LLM event logger. If not provided, creates a new one
+                using the runs directory from config.
+        """
         self.config = config
         self.event_logger = event_logger or LLMEventLogger(config.runs_dir)
         self._clients: dict[tuple[str, str], Any] = {}
@@ -51,17 +58,49 @@ class LLMRuntime:
     # ------------------------------------------------------------------ tiers
     @property
     def reasoning(self) -> ModelTier:
+        """Get the reasoning model tier (slower, more capable).
+
+        Returns:
+            The configured reasoning tier for complex reasoning tasks.
+        """
         return self.config.reasoning_tier
 
     @property
     def fast(self) -> ModelTier:
+        """Get the fast model tier (faster, lighter weight).
+
+        Returns:
+            The configured fast tier for quick, simple tasks.
+        """
         return self.config.fast_tier
 
     @staticmethod
     def is_stubbed(tier: ModelTier) -> bool:
+        """Check if a model tier is stubbed (running in dry-run mode).
+
+        Args:
+            tier: The model tier to check.
+
+        Returns:
+            True if the tier has provider == "none", indicating dry-run/test mode.
+        """
         return tier.provider == "none"
 
     def client(self, tier: ModelTier) -> Any:
+        """Get or create a cached LLM client for the given tier.
+
+        Clients are cached by (provider, model) key to avoid repeated instantiation.
+
+        Args:
+            tier: The model tier configuration.
+
+        Returns:
+            An instantiated LLM client (ChatOpenAI, AzureChatOpenAI, or ChatAnthropic).
+
+        Raises:
+            ValueError: If required environment variables are missing or provider is invalid.
+            ImportError: If required dependencies are not installed.
+        """
         key = (tier.provider, tier.model)
         if key not in self._clients:
             self._clients[key] = get_llm_client(tier)
@@ -137,10 +176,28 @@ class LLMRuntime:
         max_retries: int = 2,
         metadata: dict[str, Any] | None = None,
     ) -> BaseModel:
-        """Invoke the model and return a validated ``schema`` instance.
+        """Invoke the model and return a Pydantic-validated structured output instance.
 
-        Parse/validation failures are fed back to the model as a repair turn, up to
-        ``max_retries`` times, before raising.
+        If the LLM fails to produce valid structured output, the error is fed back
+        to the model as a repair turn, retrying up to ``max_retries`` times before
+        raising. This provides a self-healing mechanism for JSON parsing and validation.
+
+        Args:
+            tier: The model tier to use for this call.
+            node: Name of the workflow node making this call (for logging).
+            messages: Sequence of chat messages for the LLM.
+            schema: The Pydantic BaseModel class that the output must conform to.
+            prompt_template: Optional prompt template identifier for logging.
+            stub: Optional factory function for dry-run mode (provider == "none").
+            max_retries: Maximum number of repair attempts before giving up (default: 2).
+            metadata: Optional custom metadata to include in logs.
+
+        Returns:
+            A validated instance of the schema class.
+
+        Raises:
+            StubbedTierError: If tier is stubbed and no stub is provided.
+            RuntimeError: If structured output fails after all retry attempts.
         """
         if self.is_stubbed(tier):
             return self._stub_value(node, stub)
@@ -202,6 +259,25 @@ class LLMRuntime:
         stub: Callable[[], str] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> str:
+        """Invoke the model and return free-form text output.
+
+        Use this for unstructured responses like report generation or natural language
+        output where JSON validation is not needed.
+
+        Args:
+            tier: The model tier to use for this call.
+            node: Name of the workflow node making this call (for logging).
+            messages: Sequence of chat messages for the LLM.
+            prompt_template: Optional prompt template identifier for logging.
+            stub: Optional factory function for dry-run mode (provider == "none").
+            metadata: Optional custom metadata to include in logs.
+
+        Returns:
+            The LLM's text response as a string.
+
+        Raises:
+            StubbedTierError: If tier is stubbed and no stub is provided.
+        """
         if self.is_stubbed(tier):
             return self._stub_value(node, stub)
         response = self._invoke(
@@ -225,6 +301,26 @@ class LLMRuntime:
         stub: Callable[[], AIMessage] | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> AIMessage:
+        """Invoke the model in a raw chat turn with optional tool binding.
+
+        Use this for interactive conversation flows where the LLM may call tools
+        and the response is an AIMessage that may contain tool calls.
+
+        Args:
+            tier: The model tier to use for this call.
+            node: Name of the workflow node making this call (for logging).
+            messages: Sequence of chat messages for the LLM.
+            tools: Optional sequence of tool definitions to bind to the model.
+            prompt_template: Optional prompt template identifier for logging.
+            stub: Optional factory function for dry-run mode (provider == "none").
+            metadata: Optional custom metadata to include in logs.
+
+        Returns:
+            An AIMessage from the LLM, potentially containing tool calls.
+
+        Raises:
+            StubbedTierError: If tier is stubbed and no stub is provided.
+        """
         if self.is_stubbed(tier):
             return self._stub_value(node, stub)
         runnable = self.client(tier)

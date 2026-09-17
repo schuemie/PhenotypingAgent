@@ -7,3 +7,4 @@ newConceptSets/*/*.*
 .idea
 runs/
 *.pyc
+*egg-info*
