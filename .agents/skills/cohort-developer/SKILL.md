@@ -9,6 +9,8 @@ description: >
 
 Based on the Clinical Definition of a phenotype, develop an operational definition that can be executed against a database in the OMOP Common Data Model (CDM). The implementation uses the Capr R package. The `validateCapr`, `generateCohort`, and `convertCaprToJson` tools compile the Capr definition to OMOP JSON **server-side**, so you submit Capr R code — not JSON — to them.
 
+Your aim is to achieve greater than 80% PPV and sensitivity as measured by KEEPER.
+
 ## Background
 Data in observational healthcare databases (insurance claims, electronic health records) are not collected for research purposes. Important variables, such as health outcomes of interest, must be inferred using operational definitions. These definitions contain concept sets (OMOP vocabulary concept IDs) for diagnoses, procedures, measurements, drugs, and visit types, along with the temporal logic to combine them.  
 
@@ -25,13 +27,14 @@ Data in observational healthcare databases (insurance claims, electronic health 
 
 ### Phase 2: Implementation, Generation and Diagnostics (Unlimited Attempts)
 *You may iterate through this phase as many times as needed to get reasonable diagnostics before proceeding to KEEPER evaluations.*
+0. **Temporal Concept Set Overlap:** When further refining an *existing* cohort definition, use the `countConceptSetPersonOverlap` tool to assess the potential impact of adding or removing concept sets from the cohort definition.
 1. **Implementation:** Write the R code using the Capr package to define the cohort (see `CAPR_REFERENCE.md`). 
 	- **Submission format (required):** `caprCode` must be a **single `cohort(...)` expression** with every concept set **inlined** as the first argument of its domain query, and **no assignments or helper variables**. The tool compiles it in an isolated sandbox that rejects anything outside the documented Capr API. Do **not** pass JSON. You can use the `validateCapr` tool to validate the code if needed.
 	- Each `cs(...)` snippet from `getConceptSetsCapr` needs a `name = "..."` added when you inline it.
 2. **Cohort Generation:** Pass the **Capr cohort definition as R code** to the `generateCohort` tool to instantiate the cohort in the database. This tool returns a **cohort ID**.
 3. **Count Verification:** Call the `getCohortCount` tool using the returned cohort ID to get cohort counts (split by inclusion rules). Verify whether the counts are reasonable (e.g. overall count is not 0, and attrition is as expected). 
 4. **Incidence Rate Verification:** Call the `computeIncidenceRate` tool to compute the cohort incidence rate (both unstratified and stratified by age or sex).  Verify it meets expectations for the phenotype.
-5. **Temporal Concept Set Overlap:** Before the first KEEPER evaluation, use the `countConceptSetPersonOverlap` tool to assess concept sets whose inclusion, exclusion, domain, or temporal role remains uncertain.
+5. **Temporal Concept Set Overlap:** Use the `countConceptSetPersonOverlap` tool to assess concept sets whose inclusion, exclusion, domain, or temporal role remains uncertain.
 
 Before calling a diagnostic tool, state the expected direction or plausible qualitative range and its rationale. Do not invent precise epidemiologic benchmarks unless they are supplied or retrieved from an authoritative source.
 
@@ -46,7 +49,7 @@ Proceed to KEEPER evaluation only after:
 
 1. **Evaluate:** Call the `evaluateCohort` tool using the cohort ID to get a summary of the cohort's operating characteristics against the KEEPER reference set. 
 2. **Patient Profiling:** To understand the performance, call the `samplePatientProfile` tool to review individual patient profiles.
-3. **Refine or Terminate:** Adjust the cohort definition based on evaluation results. Return to Phase 2 to regenerate the cohort. You must **STOP** when the operating characteristics are sufficient (aiming for PPV and Sensitivity > 80%), OR after evaluateCohort has been called three times in total during the skill invocation.
+3. **Refine or Terminate:** Adjust the cohort definition based on evaluation results. Return to Phase 2 to regenerate the cohort. You must **STOP** after evaluateCohort has been called three times in total during the skill invocation.
 
 ## Final Output
 Present the user with the final Capr R code and a summary of the evaluation results. If the user wants the OMOP JSON, produce it with the `convertCaprToJson` tool, saving it to file immediately. Do *not* verify the content of the JSON file.
