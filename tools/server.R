@@ -1113,10 +1113,10 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
 createNewConceptSet <- function(name, description) {
   outputFolder <- file.path(newConceptSetsFolder, gsub("[^[:alnum:]]", "", name))
   json <- Phenelope::createConceptSet(
-    conceptName = name,
+    name = name,
     clinicalDefinition = description,
     connectionDetails = connectionDetails,
-    cdmDatabaseSchema = cdmDatabaseSchema,
+    vocabDatabaseSchema = cdmDatabaseSchema,
     llmClient = llmClientO3
   )
   sql <- CirceR::buildConceptSetQuery(json)
