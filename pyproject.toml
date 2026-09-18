@@ -26,6 +26,9 @@ checkpoint = [
 anthropic = [
   "langchain-anthropic>=0.3.0",
 ]
+bedrock = [
+  "langchain-aws>=0.2.0",
+]
 
 [project.scripts]
 phenotyping-agent = "phenotyping_agent.cli:app"

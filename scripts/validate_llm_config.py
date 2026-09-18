@@ -14,8 +14,7 @@ from pathlib import Path
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from phenotyping_agent.config import build_config, ModelTier
-from phenotyping_agent.llm_client import get_llm_client
+from phenotyping_agent.config import build_config
 
 
 def main():
@@ -77,6 +76,7 @@ def main():
     print("  • openai          (OpenAI GPT-4o, GPT-4-turbo, etc.)")
     print("  • azure_openai    (Azure OpenAI)")
     print("  • anthropic       (Claude 3.5 Sonnet, Haiku, etc.)")
+    print("  • bedrock         (Amazon Bedrock Claude model IDs)")
     print("  • none            (Dry-run/fixture-backed)")
 
     print(f"\nTo instantiate a client:")
@@ -138,12 +138,21 @@ def main():
     print("       --fast-tier-provider anthropic \\")
     print("       --fast-tier-model claude-3-5-haiku-20241022")
 
+    print("\n5. With Amazon Bedrock Claude:")
+    print("   $ phenotyping-agent run \\")
+    print("       --clinical-definition 'acute liver failure.txt' \\")
+    print("       --dry-run false \\")
+    print("       --reasoning-tier-provider bedrock \\")
+    print("       --reasoning-tier-model anthropic.claude-3-opus-20240229-v1:0 \\")
+    print("       --fast-tier-provider bedrock \\")
+    print("       --fast-tier-model anthropic.claude-3-haiku-20240307-v1:0")
+
     # Step 7: Show what to do next
     print("\n[STEP 7] Next Steps:")
     print("-" * 70)
 
     print("1. ✓ Configuration system is ready")
-    print("2. → Choose your LLM provider (OpenAI, Azure, or Anthropic)")
+    print("2. → Choose your LLM provider (OpenAI, Azure, Anthropic, or Bedrock)")
     print("3. → Get API credentials from provider")
     print("4. → Create .env file with credentials (see .env.example)")
     print("5. → Run: phenotyping-agent run --clinical-definition 'acute liver failure.txt' --dry-run false")
@@ -154,7 +163,7 @@ def main():
     print("-" * 70)
 
     print("✓ LLM configuration system is COMPLETE and TESTED")
-    print("✓ Supports: OpenAI, Azure OpenAI, Anthropic")
+    print("✓ Supports: OpenAI, Azure OpenAI, Anthropic, Amazon Bedrock")
     print("✓ CLI integration: Full support for model selection")
     print("✓ Environment loading: Automatic .env file support")
     print("✓ Error handling: Clear error messages with solutions")
@@ -171,4 +180,6 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
+
+
 

@@ -4,7 +4,11 @@ import os
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
+
+
+ProviderName = Literal["openai", "azure_openai", "anthropic", "bedrock", "none"]
+_SUPPORTED_PROVIDERS = {"openai", "azure_openai", "anthropic", "bedrock", "none"}
 
 
 @dataclass(slots=True)
@@ -18,7 +22,7 @@ class Budgets:
 
 @dataclass(slots=True)
 class ModelTier:
-    provider: Literal["openai", "azure_openai", "anthropic", "none"] = "none"
+    provider: ProviderName = "none"
     model: str = ""
 
 
@@ -46,6 +50,14 @@ class AppConfig:
         return self.project_root / ".vscode" / "mcp.json"
 
 
+def _coerce_provider(provider: str) -> ProviderName:
+    normalized = provider.strip()
+    if normalized not in _SUPPORTED_PROVIDERS:
+        supported = ", ".join(sorted(_SUPPORTED_PROVIDERS))
+        raise ValueError(f"Unknown LLM provider: {provider}. Supported: {supported}")
+    return cast(ProviderName, normalized)
+
+
 def _get_model_tier_from_env(env_prefix: str) -> ModelTier:
     """Load model tier configuration from environment variables.
 
@@ -61,7 +73,7 @@ def _get_model_tier_from_env(env_prefix: str) -> ModelTier:
     provider = os.getenv(provider_var, "none")
     model = os.getenv(model_var, "")
 
-    return ModelTier(provider=provider, model=model)
+    return ModelTier(provider=_coerce_provider(provider), model=model)
 
 
 def build_config(
@@ -85,7 +97,7 @@ def build_config(
         dry_run: Whether to use fixture-backed fake MCP tools
         max_iterations: Optional cap on design iterations
         run_id: Optional run identifier
-        reasoning_tier_provider: LLM provider for reasoning tier (openai, azure_openai, anthropic)
+        reasoning_tier_provider: LLM provider for reasoning tier (openai, azure_openai, anthropic, bedrock)
         reasoning_tier_model: Model name for reasoning tier
         fast_tier_provider: LLM provider for fast tier
         fast_tier_model: Model name for fast tier
@@ -119,7 +131,7 @@ def build_config(
         dry_run=dry_run,
         run_id=run_id or datetime.now().strftime("%Y%m%d_%H%M%S"),
         budgets=budgets,
-        reasoning_tier=ModelTier(provider=reasoning_provider, model=reasoning_model),
-        fast_tier=ModelTier(provider=fast_provider, model=fast_model),
+        reasoning_tier=ModelTier(provider=_coerce_provider(reasoning_provider), model=reasoning_model),
+        fast_tier=ModelTier(provider=_coerce_provider(fast_provider), model=fast_model),
     )
 

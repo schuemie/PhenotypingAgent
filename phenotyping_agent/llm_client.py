@@ -5,14 +5,12 @@ from __future__ import annotations
 import os
 import time
 from uuid import uuid4
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import re
 
 from langchain_openai import AzureChatOpenAI, ChatOpenAI
-
-if TYPE_CHECKING:
-    from langchain_core.language_models import BaseLanguageModel
+from pydantic import SecretStr
 
 from phenotyping_agent.config import ModelTier
 from phenotyping_agent.llm_events import LLMEventLogger, extract_text, extract_usage
@@ -155,6 +153,90 @@ def _get_anthropic_client(tier: ModelTier) -> Any:
     )
 
 
+def _get_bedrock_client(tier: ModelTier) -> Any:
+    """Instantiate a standard AWS or J&J gateway Bedrock client.
+
+    Expects environment variables:
+    - Optional BEDROCK_API_KEY: enables the API-key-authenticated J&J gateway
+    - Optional BEDROCK_BASE_URL: gateway URL (defaults to the J&J gateway when an API key is set)
+    - Optional BEDROCK_ANTHROPIC_VERSION: gateway payload version
+    - BEDROCK_AWS_REGION or AWS_REGION / AWS_DEFAULT_REGION: AWS region for Bedrock
+    - Optional BEDROCK_AWS_PROFILE / AWS_PROFILE: named AWS credentials profile
+    - Optional AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY / AWS_SESSION_TOKEN: explicit AWS creds
+
+    Standard AWS credential resolution also works (shared config, SSO, instance/container roles).
+    """
+    model = tier.model.strip()
+    if not model:
+        raise ValueError(
+            "No Amazon Bedrock model configured. Set the tier model to a Bedrock model ID, "
+            "for example 'anthropic.claude-3-opus-20240229-v1:0'."
+        )
+
+    gateway_api_key = os.getenv("BEDROCK_API_KEY")
+    gateway_base_url = os.getenv("BEDROCK_BASE_URL")
+    if gateway_api_key or gateway_base_url:
+        if not gateway_api_key:
+            raise ValueError(
+                "BEDROCK_API_KEY must be set when using the custom BEDROCK_BASE_URL gateway."
+            )
+        from phenotyping_agent.jnj_bedrock import JnjBedrockChat
+
+        return JnjBedrockChat(
+            model=model,
+            api_key=SecretStr(gateway_api_key),
+            base_url=gateway_base_url or "https://genaiapigwna.jnj.com",
+            anthropic_version=os.getenv("BEDROCK_ANTHROPIC_VERSION", "bedrock-2023-05-31"),
+            max_tokens=MAX_OUTPUT_TOKENS,
+        )
+
+    try:
+        from langchain_aws import ChatBedrockConverse
+    except ImportError:
+        raise ImportError(
+            "langchain-aws not installed. "
+            "Install with: pip install langchain-aws"
+        )
+
+
+    region = (
+        os.getenv("BEDROCK_AWS_REGION")
+        or os.getenv("AWS_REGION")
+        or os.getenv("AWS_DEFAULT_REGION")
+    )
+    if not region:
+        raise ValueError(
+            "Amazon Bedrock region not configured. Set BEDROCK_AWS_REGION, AWS_REGION, "
+            "or AWS_DEFAULT_REGION."
+        )
+
+    access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
+    session_token = os.getenv("AWS_SESSION_TOKEN")
+    profile = os.getenv("BEDROCK_AWS_PROFILE") or os.getenv("AWS_PROFILE")
+
+    client_kwargs: dict[str, Any] = {
+        "model": model,
+        "region_name": region,
+        "max_tokens": MAX_OUTPUT_TOKENS,
+        **_sampling_kwargs(model),
+    }
+    if profile:
+        client_kwargs["credentials_profile_name"] = profile
+    if access_key or secret_key or session_token:
+        if not access_key or not secret_key:
+            raise ValueError(
+                "AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must both be set when using "
+                "explicit AWS credentials for Amazon Bedrock."
+            )
+        client_kwargs["aws_access_key_id"] = access_key
+        client_kwargs["aws_secret_access_key"] = secret_key
+        if session_token:
+            client_kwargs["aws_session_token"] = session_token
+
+    return ChatBedrockConverse(**client_kwargs)
+
+
 def get_llm_client(tier: ModelTier) -> Any:
     """Factory function to get an LLM client based on ModelTier configuration.
 
@@ -162,7 +244,8 @@ def get_llm_client(tier: ModelTier) -> Any:
         tier: ModelTier instance with provider and model name
 
     Returns:
-        Instantiated language model client (ChatOpenAI, AzureChatOpenAI, or ChatAnthropic)
+        Instantiated language model client (ChatOpenAI, AzureChatOpenAI, ChatAnthropic,
+        or ChatBedrockConverse)
 
     Raises:
         ValueError: If required environment variables are missing
@@ -177,6 +260,9 @@ def get_llm_client(tier: ModelTier) -> Any:
 
         >>> tier = ModelTier(provider="anthropic", model="claude-3-5-sonnet-20241022")
         >>> llm = get_llm_client(tier)
+
+        >>> tier = ModelTier(provider="bedrock", model="anthropic.claude-3-opus-20240229-v1:0")
+        >>> llm = get_llm_client(tier)
     """
     if tier.provider == "openai":
         return _get_openai_client(tier)
@@ -184,6 +270,8 @@ def get_llm_client(tier: ModelTier) -> Any:
         return _get_azure_openai_client(tier)
     elif tier.provider == "anthropic":
         return _get_anthropic_client(tier)
+    elif tier.provider == "bedrock":
+        return _get_bedrock_client(tier)
     elif tier.provider == "none":
         raise ValueError(
             f"LLM provider is set to 'none'. "
@@ -192,7 +280,7 @@ def get_llm_client(tier: ModelTier) -> Any:
     else:
         raise ValueError(
             f"Unknown LLM provider: {tier.provider}. "
-            "Supported: 'openai', 'azure_openai', 'anthropic'"
+            "Supported: 'openai', 'azure_openai', 'anthropic', 'bedrock'"
         )
 
 

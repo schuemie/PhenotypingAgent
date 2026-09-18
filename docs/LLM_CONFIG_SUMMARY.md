@@ -6,7 +6,7 @@ You now have a complete LLM configuration system for the PhenotypingAgent workfl
 
 ### 1. **LLM Client Factory** (`phenotyping_agent/llm_client.py`)
    - Unified interface for multiple LLM providers
-   - Supports: **OpenAI**, **Azure OpenAI**, **Anthropic Claude**
+   - Supports: **OpenAI**, **Azure OpenAI**, **Anthropic Claude**, **Amazon Bedrock Claude**
    - Automatic credential loading from environment variables
    - Smart error messages guiding users to API key setup
    - **Status:** ✅ Production-ready, fully tested
@@ -25,7 +25,7 @@ You now have a complete LLM configuration system for the PhenotypingAgent workfl
 
 ### 4. **Environment Configuration**
    - `.env.example` with comprehensive documentation
-   - 3 provider templates (OpenAI, Azure OpenAI, Anthropic)
+   - 4 provider templates (OpenAI, Azure OpenAI, Anthropic, Bedrock)
    - Cost estimation and usage examples
    - **Status:** ✅ Ready to copy and configure
 
@@ -100,6 +100,20 @@ phenotyping-agent run \
     --fast-tier-model claude-3-5-haiku-20241022
 ```
 
+### Option E: Amazon Bedrock + Anthropic Claude
+
+```bash
+pip install -e ".[bedrock]"
+
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --dry-run false \
+    --reasoning-tier-provider bedrock \
+    --reasoning-tier-model anthropic.claude-3-opus-20240229-v1:0 \
+    --fast-tier-provider bedrock \
+    --fast-tier-model anthropic.claude-3-haiku-20240307-v1:0
+```
+
 ## How LLMs Are Used in the Workflow
 
 The configured LLMs power the following nodes in your workflow:
@@ -136,12 +150,19 @@ AZURE_OPENAI_DEPLOYMENT_NAME=...           # Optional, defaults to model name
 ANTHROPIC_API_KEY=sk-ant-...               # Required
 ```
 
+### Amazon Bedrock Setup
+```bash
+BEDROCK_AWS_REGION=us-east-1               # Required unless AWS_REGION / AWS_DEFAULT_REGION is set
+BEDROCK_AWS_PROFILE=default                # Optional named profile
+# Or rely on the standard AWS credential chain (env vars, shared config, SSO, role, etc.)
+```
+
 ### Model Tier Configuration
 ```bash
-REASONING_TIER_PROVIDER=openai|azure_openai|anthropic  # Required if not dry-run
-REASONING_TIER_MODEL=gpt-4o|gpt-4-turbo|claude-3-5-sonnet-20241022  # Model name
-FAST_TIER_PROVIDER=openai|azure_openai|anthropic       # Required if not dry-run
-FAST_TIER_MODEL=gpt-4o-mini|gpt-3.5-turbo|claude-3-5-haiku-20241022  # Model name
+REASONING_TIER_PROVIDER=openai|azure_openai|anthropic|bedrock  # Required if not dry-run
+REASONING_TIER_MODEL=gpt-4o|gpt-4-turbo|claude-3-5-sonnet-20241022|anthropic.claude-3-opus-20240229-v1:0
+FAST_TIER_PROVIDER=openai|azure_openai|anthropic|bedrock       # Required if not dry-run
+FAST_TIER_MODEL=gpt-4o-mini|gpt-3.5-turbo|claude-3-5-haiku-20241022|anthropic.claude-3-haiku-20240307-v1:0
 ```
 
 ## Cost Estimates
@@ -153,6 +174,7 @@ Per phenotype run with 5 design iterations:
 | OpenAI | GPT-4o + GPT-4o-mini | $0.50 - $1.00 |
 | Azure OpenAI | Any (pay-per-hour) | Varies |
 | Anthropic | Claude 3.5 Sonnet + Haiku | $0.30 - $0.60 |
+| Amazon Bedrock | Claude pricing varies by region/model | Varies |
 
 **Cost Control Tips:**
 - Use `--max-iterations 2` to limit design loops
@@ -262,4 +284,5 @@ Questions? See:
 - **LLM_CONFIGURATION.md** for provider-specific setup
 - **QUICK_START_LLM.md** for command examples
 - **llm_client.py** for implementation details
+
 

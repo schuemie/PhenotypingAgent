@@ -55,7 +55,9 @@ Tiers can also come from `REASONING_TIER_PROVIDER` / `REASONING_TIER_MODEL` /
 A tier left as `none` falls back to the deterministic stand-in for that node.
 
 Optional extras: `pip install -e ".[checkpoint]"` enables SQLite checkpointing and `--resume`;
-`pip install -e ".[anthropic]"` enables Claude tiers.
+`pip install -e ".[anthropic]"` enables direct Anthropic API tiers; `pip install -e ".[bedrock]"`
+enables Amazon Bedrock Claude tiers such as
+`anthropic.claude-3-opus-20240229-v1:0`.
 
 ### Run artifacts
 

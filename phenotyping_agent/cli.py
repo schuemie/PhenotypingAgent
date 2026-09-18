@@ -28,19 +28,19 @@ def run(
     run_id: str | None = typer.Option(None, help="Run folder identifier."),
     reasoning_tier_provider: str | None = typer.Option(
         None,
-        help="LLM provider for reasoning tier: 'openai', 'azure_openai', 'anthropic', or 'none' for dry-run."
+        help="LLM provider for reasoning tier: 'openai', 'azure_openai', 'anthropic', 'bedrock', or 'none' for dry-run."
     ),
     reasoning_tier_model: str | None = typer.Option(
         None,
-        help="Model name for reasoning tier (e.g., 'gpt-4o', 'claude-3-5-sonnet-20241022')."
+        help="Model name for reasoning tier (e.g., 'gpt-4o', 'claude-3-5-sonnet-20241022', 'anthropic.claude-3-opus-20240229-v1:0')."
     ),
     fast_tier_provider: str | None = typer.Option(
         None,
-        help="LLM provider for fast tier: 'openai', 'azure_openai', 'anthropic', or 'none' for dry-run."
+        help="LLM provider for fast tier: 'openai', 'azure_openai', 'anthropic', 'bedrock', or 'none' for dry-run."
     ),
     fast_tier_model: str | None = typer.Option(
         None,
-        help="Model name for fast tier (e.g., 'gpt-4o-mini', 'claude-3-5-haiku-20241022')."
+        help="Model name for fast tier (e.g., 'gpt-4o-mini', 'claude-3-5-haiku-20241022', 'anthropic.claude-3-haiku-20240307-v1:0')."
     ),
     resume: bool = typer.Option(
         False,

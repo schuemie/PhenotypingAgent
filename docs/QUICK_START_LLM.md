@@ -123,6 +123,8 @@ When you run the agent, it executes this sequence per iteration:
 | `AZURE_OPENAI_API_KEY` | If `azure_openai` | `...` | Azure API key |
 | `AZURE_OPENAI_ENDPOINT` | If `azure_openai` | `https://...` | Azure endpoint URL |
 | `ANTHROPIC_API_KEY` | If `anthropic` | `sk-ant-...` | Anthropic API key |
+| `BEDROCK_AWS_REGION` | If `bedrock` | `us-east-1` | AWS region for Bedrock |
+| `BEDROCK_AWS_PROFILE` | Optional for `bedrock` | `default` | Named AWS profile override |
 
 ## CLI Arguments Reference
 
@@ -135,9 +137,9 @@ Options:
   --dry-run BOOLEAN                       Use dry-run fixtures (default: false)
   --max-iterations INTEGER                Cap on design iterations (default: 8)
   --run-id TEXT                           Run folder identifier
-  --reasoning-tier-provider TEXT          openai|azure_openai|anthropic
+  --reasoning-tier-provider TEXT          openai|azure_openai|anthropic|bedrock
   --reasoning-tier-model TEXT             Model name (e.g., gpt-4o)
-  --fast-tier-provider TEXT               openai|azure_openai|anthropic
+  --fast-tier-provider TEXT               openai|azure_openai|anthropic|bedrock
   --fast-tier-model TEXT                  Model name (e.g., gpt-4o-mini)
   --help                                  Show help message
 ```
@@ -173,6 +175,17 @@ phenotyping-agent run \
     --fast-tier-model claude-3-5-haiku-20241022
 ```
 
+### Amazon Bedrock + Claude Opus
+```bash
+phenotyping-agent run \
+    --clinical-definition "acute liver failure.txt" \
+    --max-iterations 3 \
+    --reasoning-tier-provider bedrock \
+    --reasoning-tier-model anthropic.claude-3-opus-20240229-v1:0 \
+    --fast-tier-provider bedrock \
+    --fast-tier-model anthropic.claude-3-haiku-20240307-v1:0
+```
+
 ### Hybrid (CLI args override .env)
 ```bash
 # Use OpenAI for reasoning, Anthropic for fast
@@ -191,10 +204,12 @@ After each run, check:
 1. **OpenAI Dashboard:** https://platform.openai.com/account/usage/overview
 2. **Azure Portal:** Cognitive Services > Your resource > Cost Management
 3. **Anthropic Console:** https://console.anthropic.com/usage
+4. **AWS Billing + Bedrock usage metrics:** AWS Console
 
 For a typical ALF run (5 iterations):
 - **OpenAI:** $0.50 - $1.00
 - **Anthropic:** $0.30 - $0.60
+- **Amazon Bedrock:** depends on region and selected Claude model
 - **Azure:** Depends on reserved capacity
 
 ## Troubleshooting
