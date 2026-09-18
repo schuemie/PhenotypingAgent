@@ -1128,7 +1128,7 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
     sql = sql,
     reference_cohort_database_schema = referenceCohortDatabaseSchema,
     reference_cohort_table = referenceCohortTable,
-    reference_cohort_definition_id = 1,
+    reference_cohort_definition_id = referenceCohortDefinitionId,
     cohort_database_schema = cohortDatabaseSchema,
     cohort_table = cohortTable,
     cohort_definition_id = cohortId,
@@ -1151,7 +1151,7 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
     sql = sql,
     reference_cohort_database_schema = referenceCohortDatabaseSchema,
     reference_cohort_profiles_table = referenceCohortProfilesTable,
-    reference_cohort_definition_id = 1,
+    reference_cohort_definition_id = referenceCohortDefinitionId,
     person_id = personId,
     snakeCaseToCamelCase = TRUE,
   )
