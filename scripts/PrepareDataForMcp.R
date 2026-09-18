@@ -19,8 +19,12 @@ conceptSetDatabaseSchema <- "scratch.scratch_all"
 conceptSetExpressionsTable <- "concept_set_expression"
 conceptSetExpressionsPlusTable <- "concept_set_expression_plus"
 phenotypeToConceptSetNameTable <- "phenotype_to_concept_set"
+referenceCohortDatabaseSchema <- "scratch.scratch_all"
+referenceCohortTable <- "reference_cohort_optum_extended_dod_v4020"
 
-phenotypes <- c("Acute liver failure")
+phenotypes <- readLines("../largescalephentest/SelectedPhenotypes.txt")
+
+maxCores <- 5
 
 # Collect all concept sets from database -------------------------------------------------------------------------------
 connection <- connect(connectionDetails)
@@ -40,7 +44,7 @@ connection <- connect(connectionDetails)
 #   snakeCaseToCamelCase = TRUE
 # )
 sql <- "
-    SELECT DISTINCT concept_set_expression.*
+    SELECT concept_set_expression.*
     FROM @database_schema.@concept_set_expression_table concept_set_expression
     INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
       ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
@@ -53,31 +57,65 @@ conceptSetExpressions <- DatabaseConnector::renderTranslateQuerySql(
   database_schema = conceptSetDatabaseSchema,
   phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
   concept_set_expression_table = conceptSetExpressionsTable,
-  phenotypes = paste(phenotypes, collapse = "', '"),
+  phenotypes = paste(gsub("'", "''", phenotypes), collapse = "', '"),
   snakeCaseToCamelCase = TRUE
 )
 
-# row = conceptSetExpressions[1, ]
-processConceptSet <- function(row) {
-  caprWithReference <- jsonToCaprWithReference(row$conceptSetExpression, row$conceptSetName)
-  conceptSetSql <- CirceR::buildConceptSetQuery(row$conceptSetExpression)
-  counts <- getCounts(conceptSetSql, connection, cdmDatabaseSchema)
-  
-  newRow <- row |>
-    select("conceptSetName", "hypernym", "conceptSetExpression") |>
-    bind_cols(caprWithReference) |>
-    bind_cols(counts)
-  return(newRow)
+# Process in parallel in batches
+cacheFolder <- "e:/temp/cacheConceptSetExpression"
+dir.create(cacheFolder)
+
+# batch = batches[[1]]
+processConceptSet <- function(batch, connectionDetails, cdmDatabaseSchema, cacheFolder) {
+  connection <- DatabaseConnector::connect(connectionDetails)
+  on.exit(DatabaseConnector::disconnect(connection))
+  newRows <- list()
+  for (i in seq_len(nrow(batch))) {
+    fileName <- file.path(cacheFolder, sprintf("%s.rds", digest::digest(batch$conceptSetExpression[i])))
+    if (file.exists(fileName)) {
+      newRow <- readRDS(fileName)
+    } else {
+      caprWithReference <- jsonToCaprWithReference(batch$conceptSetExpression[i], batch$conceptSetName[i])
+      conceptSetSql <- CirceR::buildConceptSetQuery(batch$conceptSetExpression[i])
+      counts <- getCounts(conceptSetSql, connection, cdmDatabaseSchema)
+      
+      newRow <- batch[i, ] |>
+        select("conceptSetName", "hypernym", "conceptSetExpression") |>
+        bind_cols(caprWithReference) |>
+        bind_cols(counts)
+      saveRDS(newRow, fileName)
+    }
+    newRows[[i]] <- newRow
+  }
+  return(bind_rows(newRows))
 }
 
-newRows <- lapply(split(conceptSetExpressions, seq_len(nrow(conceptSetExpressions))), processConceptSet)
-newRows <- bind_rows(newRows)
+batches <- conceptSetExpressions |>
+  mutate(batchId = sample.int(floor(nrow(conceptSetExpressions)/25), nrow(conceptSetExpressions), replace = TRUE)) |>
+  group_by(batchId) |>
+  group_split()
+
+cluster <- ParallelLogger::makeCluster(maxCores)
+ParallelLogger::clusterRequire(cluster, "dplyr")
+parallel::clusterExport(cluster, "jsonToCaprWithReference")
+parallel::clusterExport(cluster, "getCounts")
+
+conceptSetExpressionsPlus <- ParallelLogger::clusterApply(
+  cluster = cluster,
+  x = batches,
+  fun = processConceptSet,
+  connectionDetails = connectionDetails,
+  cdmDatabaseSchema = cdmDatabaseSchema, 
+  cacheFolder = cacheFolder
+)
+ParallelLogger::stopCluster(cluster)
+conceptSetExpressionsPlus <- bind_rows(conceptSetExpressionsPlus)
 
 DatabaseConnector::insertTable(
   connection = connection,
   databaseSchema = conceptSetDatabaseSchema,
   tableName = conceptSetExpressionsPlusTable,
-  data = newRows,
+  data = conceptSetExpressionsPlus,
   createTable = TRUE,
   dropTableIfExists = TRUE,
   camelCaseToSnakeCase = TRUE,
@@ -91,7 +129,7 @@ testData <- DatabaseConnector::renderTranslateQuerySql(
   table = conceptSetExpressionsPlusTable,
   snakeCaseToCamelCase = TRUE
 )
-x1 <- newRows |>
+x1 <- conceptSetExpressionsPlus |>
   arrange(conceptSetName, hypernym)
 x2 <- testData |>
   arrange(conceptSetName, hypernym)
@@ -135,41 +173,83 @@ saveRDS(rows, "tools/StandardConceptSets.rds")
 
 disconnect(connection)
 
-# Upload KEEPER profiles ------------------------------------------------------------------
-folder <- "../largescalephentest/AcuteLiverFailure"
-keeperProfiles <- readRDS(file.path(folder, "KeeperHsc.rds"))
-llmReviews <- readRDS(file.path(folder, "llmReviewsHsc.rds"))
+# Upload KEEPER profiles -----------------------------------------------------------------------------------------------
+keeperFolder <- "../largescalephentest/Keeper"
 
-# group = groups[[1]]
-createRow <- function(group) {
-  llmReview <- llmReviews |>
-    filter(generatedId == group$generatedId[1])
-  profileText <- Keeper:::createPrompt(Keeper::createPromptSettings(), group)
-  row <- llmReview |>
-    select("personId", "isCase", rationale = "justification") |>
-    mutate(profile = profileText)
-  return(row)
-}
-groups <- keeperProfiles |>
-  group_by(generatedId) |>
-  group_split()
-
-rows <- lapply(groups, createRow)
-rows <- bind_rows(rows)
-rows$cohortDefinitionId <- 1 # TODO: connect this with reference table
+cacheFolder <- "e:/temp/cacheKeeperProfilesForAgents"
+dir.create(cacheFolder)
 
 connection <- connect(connectionDetails)
 
-rows$personId <- bit64::as.integer64(rows$personId)
+referenceCohorts <- renderTranslateQuerySql(
+  connection = connection,
+  sql = "SELECT * FROM @database_schema.@table;",
+  database_schema = referenceCohortDatabaseSchema,
+  table = Keeper::createReferenceCohortTableNames(referenceCohortTable)$referenceCohortMetadataTable,
+  snakeCaseToCamelCase = TRUE
+)
+referenceCohorts <- referenceCohorts |>
+  filter(phenotype %in% phenotypes)
+
+# row = rows[[1]]
+createProfileRow <- function(row, keeperFolder, cacheFolder) {
+  fileName <- file.path(cacheFolder, sprintf("%s.rds", gsub("[^[:alnum:]]+", "_", row$phenotype)))
+  if (file.exists(fileName)) {
+    newRows <- readRDS(fileName)
+  } else {
+    message("Fetching profiles for ", row$phenotype)
+    phenotypeFolder <- file.path(keeperFolder, gsub("[^[:alnum:]]+", "_", row$phenotype))
+    keeperProfiles <- readRDS(file.path(phenotypeFolder, "KeeperHsc.rds"))
+    llmReviews <- readRDS(file.path(phenotypeFolder, "llmReviewsHsc.rds"))
+    
+    # group = groups[[1]]
+    createRow <- function(group) {
+      llmReview <- llmReviews |>
+        filter(generatedId == group$generatedId[1])
+      profileText <- Keeper:::createPrompt(Keeper::createPromptSettings(), group)
+      row <- llmReview |>
+        select("personId", "isCase", rationale = "justification") |>
+        mutate(profile = profileText)
+      return(row)
+    }
+    groups <- keeperProfiles |>
+      group_by(generatedId) |>
+      group_split()
+    
+    newRows <- lapply(groups, createRow)
+    newRows <- bind_rows(newRows)
+    newRows$cohortDefinitionId <- row$cohortDefinitionId
+    saveRDS(newRows, fileName)
+  }
+  return(newRows)
+}
+rows <- split(referenceCohorts, seq_len(nrow(referenceCohorts)))
+cluster <- ParallelLogger::makeCluster(maxCores)
+ParallelLogger::clusterRequire(cluster, "dplyr")
+
+allProfiles <- ParallelLogger::clusterApply(
+  cluster = cluster,
+  x = rows,
+  fun = createProfileRow,
+  keeperFolder = keeperFolder,
+  cacheFolder = cacheFolder
+)
+
+ParallelLogger::stopCluster(cluster)
+
+allProfiles <- bind_rows(allProfiles)
+
+allProfiles$personId <- bit64::as.integer64(allProfiles$personId)
 insertTable(
   connection = connection,
   databaseSchema = referenceCohortDatabaseSchema,
   tableName = referenceCohortProfilesTable,
-  data = rows,
+  data = allProfiles,
   dropTableIfExists = TRUE,
   createTable = TRUE,
   progressBar = TRUE,
-  camelCaseToSnakeCase = TRUE
+  camelCaseToSnakeCase = TRUE,
+  bulkLoad = TRUE
 )
 
 disconnect(connection)

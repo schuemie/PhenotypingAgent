@@ -434,7 +434,7 @@ validateCapr <- function(caprCode) {
 
 convertCaprToJson <- function(caprCode) {
   json <- compileCaprViaWorker(caprCode)
-
+  
   conceptIds <- stringr::str_match_all(json, '"CONCEPT_ID"\\s*:\\s*(\\d+)')[[1]][, 2] 
   conceptIds <- unique(as.integer(conceptIds))
   sql <- "
@@ -1032,7 +1032,7 @@ samplePatientProfile <- function(cohortId, phenotype, type) {
   if (!type %in% c("tp", "fp", "tn", "fn")) {
     return("Error: type must have value 'TP', 'FP', 'TN', or 'FN'")
   }
-
+  
   referenceCohortDefinitionId <- getKeeperReferenceCohortId(phenotype)
   
   sql <- "
@@ -1237,10 +1237,10 @@ countConceptSetPersonOverlapTool <- tool(
         endDay = type_integer("Last included day relative to index; positive values are after index.")
       ),
       description = paste(
-        "Time windows to count. Omit to use: prior year (-365 to -31), prior month",
-        "(-30 to -1), index date (0), following month (1 to 30), and following year (31 to 365)."
-      ),
-      required = FALSE
+        "Time windows to count. Unless you have a specific reason to change them, pass the standard",
+        "windows: prior year (-365 to -31), prior month (-30 to -1), index date (0 to 0),",
+        "following month (1 to 30), and following year (31 to 365)."
+      )
     )
   )
 )
@@ -1318,23 +1318,27 @@ createNewConceptSetTool <- tool(
 
 
 # Start the MCP server -------------------------------------------------------------------------------------------------
-mcp_server(
-  tools = list(
-    listConceptSetsTool,
-    getConceptSetsCaprTool,
-    getCohortCountTool,
-    getDatabaseDescriptionTool,
-    countConceptSetPersonOverlapTool,
-    describeMeasurementValuesTool,
-    computeIncidenceRateTool,
-    validateCaprTool,
-    convertCaprToJsonTool,
-    generateCohortTool,
-    evaluateCohortTool,
-    samplePatientProfileTool
-    #createNewConceptSetTool
-  ),
-  session_tools = FALSE
-)
+if (getOption("RUN_SERVER", default = TRUE)) {
+  mcp_server(
+    tools = list(
+      listConceptSetsTool,
+      getConceptSetsCaprTool,
+      getCohortCountTool,
+      getDatabaseDescriptionTool,
+      countConceptSetPersonOverlapTool,
+      describeMeasurementValuesTool,
+      computeIncidenceRateTool,
+      validateCaprTool,
+      convertCaprToJsonTool,
+      generateCohortTool,
+      evaluateCohortTool,
+      samplePatientProfileTool
+      #createNewConceptSetTool
+    ),
+    session_tools = FALSE
+  )
+  
+  connectionPool$close()
+}
 
-connectionPool$close()
+
