@@ -241,6 +241,36 @@ quoteSqlString <- function(value) {
   paste0("'", gsub("'", "''", value, fixed = TRUE), "'")
 }
 
+formatPipeTable <- function(data, zeroAsBlank = character()) {
+  escapeCell <- function(value, blankZero = FALSE) {
+    if (length(value) == 0L || is.na(value) || (blankZero && value == 0)) {
+      return("")
+    }
+    text <- as.character(value)
+    text <- gsub("|", "\\|", text, fixed = TRUE)
+    gsub("[\r\n]+", "<br>", text)
+  }
+
+  columns <- names(data)
+  rendered <- lapply(columns, function(column) {
+    vapply(data[[column]], escapeCell, character(1), blankZero = column %in% zeroAsBlank)
+  })
+  names(rendered) <- columns
+  rendered <- as.data.frame(rendered, stringsAsFactors = FALSE, check.names = FALSE)
+
+  lines <- c(
+    paste0("| ", paste(columns, collapse = " | "), " |"),
+    paste0("| ", paste(rep("---", length(columns)), collapse = " | "), " |")
+  )
+  if (nrow(rendered) > 0L) {
+    lines <- c(
+      lines,
+      apply(rendered, 1L, function(row) paste0("| ", paste(row, collapse = " | "), " |"))
+    )
+  }
+  paste(lines, collapse = "\n")
+}
+
 ensureConceptSetsExist <- function(conceptSetsToCreate) {
   ensureConceptSetTablesExist()
   conceptSetsToCreate$conceptSetHash <- vapply(
@@ -741,8 +771,10 @@ countConceptSetPersonOverlap <- function(
         BETWEEN window.start_day AND window.end_day
       GROUP BY occurrence.concept_set_hash, window.window_order
     )
-    SELECT requested.concept_set_hash, requested.concept_set_name,
-      window.window_name, window.start_day, window.end_day,
+    SELECT requested.concept_set_name,
+      window.window_name,
+      window.start_day,
+      window.end_day,
       COALESCE(MAX(CASE WHEN population.domain_id = 'Condition' THEN population.person_count END), 0) AS condition_persons,
       COALESCE(MAX(CASE WHEN cohort.domain_id = 'Condition' THEN cohort.person_count END), 0) AS condition_cohort_persons,
       COALESCE(MAX(CASE WHEN population.domain_id = 'Procedure' THEN population.person_count END), 0) AS procedure_persons,
@@ -786,7 +818,29 @@ countConceptSetPersonOverlap <- function(
     cdm_database_schema = cdmDatabaseSchema,
     snakeCaseToCamelCase = TRUE
   )
-  return(jsonlite::toJSON(counts, auto_unbox = TRUE, pretty = TRUE))
+
+  identityColumns <- c("conceptSetName", "windowName", "startDay", "endDay")
+  overallColumns <- c("overallPersons", "overallCohortPersons")
+  domainColumns <- intersect(
+    c(
+      "conditionPersons", "conditionCohortPersons",
+      "procedurePersons", "procedureCohortPersons",
+      "drugPersons", "drugCohortPersons",
+      "measurementPersons", "measurementCohortPersons",
+      "observationPersons", "observationCohortPersons",
+      "visitPersons", "visitCohortPersons"
+    ),
+    names(counts)
+  )
+  nonZeroDomainColumns <- domainColumns[vapply(
+    counts[domainColumns],
+    function(column) any(!is.na(column) & column != 0),
+    logical(1)
+  )]
+  columnsToInclude <- c(identityColumns, nonZeroDomainColumns, overallColumns)
+  compactCounts <- counts[, columnsToInclude, drop = FALSE]
+
+  return(formatPipeTable(compactCounts, zeroAsBlank = nonZeroDomainColumns))
 }
 
 describeMeasurementValues <- function(caprCode) {
@@ -1220,8 +1274,7 @@ countConceptSetPersonOverlapTool <- tool(
   description = paste(
     "Instantiate one or more Capr concept sets and count distinct people with their concepts",
     "in the general population and within inclusive day windows relative to generated cohort",
-    "index dates. Returns per-domain and overall counts for each window. Instantiated concept",
-    "sets are cached by hash for reuse."
+    "index dates. Returns per-domain and overall counts for each window."
   ),
   arguments = list(
     caprCode = type_array(type_string(paste(

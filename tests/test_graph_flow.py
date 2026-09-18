@@ -45,8 +45,11 @@ def _expectation(diagnostic: str) -> Expectation:
 
 def _design(change: str, with_overlap: bool) -> DesignOutput:
     diagnostics = ["cohortCount", "incidenceRate"] + (["conceptSetOverlap"] if with_overlap else [])
+    selected_design = DESIGN.model_copy(
+        update={"overlap_concept_sets": ["Acute liver failure"] if with_overlap else []}
+    )
     return DesignOutput(
-        design=DESIGN,
+        design=selected_design,
         change_from_previous=change,
         expectations=[_expectation(name) for name in diagnostics],
     )

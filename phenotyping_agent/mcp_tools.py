@@ -101,7 +101,12 @@ class FakeToolClient:
                     "incidenceRatePer1000PersonYears": 0.083,
                 }
             ],
-            "countConceptSetPersonOverlap": [{"conceptSetName": "Acute liver failure"}],
+            "countConceptSetPersonOverlap": (
+                "| conceptSetName | windowName | startDay | endDay | conditionPersons | "
+                "conditionCohortPersons | overallPersons | overallCohortPersons |\n"
+                "| --- | --- | --- | --- | --- | --- | --- | --- |\n"
+                "| Acute liver failure | Index date | 0 | 0 | 100 | 75 | 100 | 75 |"
+            ),
             "describeMeasurementValues": [{"conceptSetName": "INR", "unitConceptName": "ratio"}],
             "evaluateCohort": [
                 {

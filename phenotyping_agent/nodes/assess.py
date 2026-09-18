@@ -17,6 +17,7 @@ from phenotyping_agent.context import (
     design_block,
     expectations_block,
     incidence_block,
+    overlap_block,
 )
 from phenotyping_agent.deps import NodeDeps
 from phenotyping_agent.llm_runtime import load_prompt
@@ -55,7 +56,7 @@ def _task_message(state: AgentState) -> str:
             incidence_block(state.get("latest_incidence")),
             "",
             "# Concept set overlap",
-            str(state.get("latest_overlap") or "Not measured this iteration."),
+            overlap_block(state.get("latest_overlap")),
             "",
             "# Your task",
             "Grade every expectation by index, interpret the results, and choose the next action.",

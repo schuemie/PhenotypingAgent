@@ -278,6 +278,9 @@ def run(state: AgentState, deps: NodeDeps) -> dict:
             if name not in gaps:
                 gaps.append(name)
 
+    # Exploratory diagnostics may have registered and consumed temporary expectations. The final
+    # structured design is authoritative for the diagnostics that run against the new cohort.
+    facade.reset_expectations()
     for expectation in output.expectations:
         facade.record_expectation(expectation)
 

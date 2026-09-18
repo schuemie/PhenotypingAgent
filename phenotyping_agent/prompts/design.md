@@ -54,6 +54,12 @@ After this step the agent generates the cohort and runs `getCohortCount` and
   want the overlap diagnostic to run. The Phase 2 to Phase 3 gate requires at least one overlap
   call during the run.
 
+When registering a `conceptSetOverlap` expectation, populate `design.overlap_concept_sets` with
+the concept-set names whose overlap results are needed to grade that expectation. Choose the
+smallest informative set; do not include every concept set encountered during exploration. Every
+selected name must also appear in `design.concept_sets`. Leave `overlap_concept_sets` empty when
+no overlap expectation is registered.
+
 {expectation_rules}
 
 ## Output
@@ -66,6 +72,7 @@ After any tool use, return the final response as a `DesignOutput` in valid JSON 
     "hypothesis": "string",
     "entry_event": "string",
     "concept_sets": ["string"],
+    "overlap_concept_sets": ["concept set names selected for overlap measurement"],
     "inclusion_rules": ["string"],
     "exclusion_rules": ["string"],
     "temporal_logic": "string"

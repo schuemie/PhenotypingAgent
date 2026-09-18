@@ -59,6 +59,7 @@ def design_block(design: Design | None) -> str:
         f"Hypothesis: {design.hypothesis}",
         f"Entry event: {design.entry_event}",
         f"Concept sets: {', '.join(design.concept_sets) or 'none'}",
+        f"Overlap concept sets: {', '.join(design.overlap_concept_sets) or 'none'}",
         "Inclusion rules:",
         *inclusion,
         "Exclusion rules:",
@@ -113,6 +114,15 @@ def incidence_block(summary: IncidenceSummary | None) -> str:
             f"| {row.stratum_name} | {row.persons:.0f} | {row.events:.0f} | {row.person_years:.0f} | {rate} |"
         )
     return "\n".join(lines)
+
+
+def overlap_block(overlap: str | list[dict] | None) -> str:
+    """Render the compact MCP table, with compatibility for legacy row payloads."""
+    if not overlap:
+        return "Not measured this iteration."
+    if isinstance(overlap, str):
+        return overlap
+    return str(overlap)
 
 
 def keeper_block(metrics: KeeperMetrics | None) -> str:

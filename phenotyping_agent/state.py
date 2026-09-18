@@ -15,6 +15,10 @@ class Design(BaseModel):
     hypothesis: str
     entry_event: str
     concept_sets: list[str] = Field(default_factory=list)
+    overlap_concept_sets: list[str] = Field(
+        default_factory=list,
+        description="Concept sets selected for the concept-set overlap diagnostic.",
+    )
     inclusion_rules: list[str] = Field(default_factory=list)
     exclusion_rules: list[str] = Field(default_factory=list)
     temporal_logic: str
@@ -150,6 +154,38 @@ class DesignOutput(BaseModel):
     not_expressible: bool = False
     not_expressible_reason: str | None = None
 
+    @model_validator(mode="after")
+    def validate_overlap_selection(self) -> "DesignOutput":
+        if self.not_expressible:
+            return self
+
+        selected = self.design.overlap_concept_sets
+        has_overlap_expectation = any(
+            expectation.diagnostic == "conceptSetOverlap" for expectation in self.expectations
+        )
+        if has_overlap_expectation and not selected:
+            raise ValueError(
+                "design.overlap_concept_sets must name at least one concept set when a "
+                "conceptSetOverlap expectation is registered"
+            )
+        if selected and not has_overlap_expectation:
+            raise ValueError(
+                "a conceptSetOverlap expectation is required when design.overlap_concept_sets "
+                "is populated"
+            )
+        duplicates = sorted({name for name in selected if selected.count(name) > 1})
+        if duplicates:
+            raise ValueError(
+                "design.overlap_concept_sets contains duplicate names: " + ", ".join(duplicates)
+            )
+        unknown = [name for name in selected if name not in self.design.concept_sets]
+        if unknown:
+            raise ValueError(
+                "every overlap concept set must also appear in design.concept_sets; missing: "
+                + ", ".join(unknown)
+            )
+        return self
+
 
 class RawVerdict(BaseModel):
     """A verdict referring to a pre-registered expectation by position."""
@@ -209,7 +245,7 @@ class AgentState(TypedDict):
     # Diagnostics captured by `measure` / `evaluate`, typed instead of smuggled.
     latest_counts: AttritionSummary | None
     latest_incidence: IncidenceSummary | None
-    latest_overlap: list[dict]
+    latest_overlap: str | list[dict]
     latest_measurements: list[dict]
     latest_keeper: KeeperMetrics | None
     latest_profiles: list[dict]

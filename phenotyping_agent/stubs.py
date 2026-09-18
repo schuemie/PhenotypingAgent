@@ -31,6 +31,7 @@ def design_output(state: AgentState) -> DesignOutput:
         hypothesis=f"{state['phenotype']} should be rare and concentrated in severe acute care.",
         entry_event=f"First {state['phenotype'].lower()} diagnosis.",
         concept_sets=names,
+        overlap_concept_sets=names[:1],
         inclusion_rules=["Adult age >= 18 at index"],
         exclusion_rules=["Exclude pre-existing chronic liver disease"],
         temporal_logic="Require diagnosis on index and exclusions in the prior year.",
