@@ -341,14 +341,14 @@ getKeeperReferenceCohortId <- function(phenotype) {
   sql <- "
     SELECT cohort_definition_id
     FROM @database_schema.@table
-    WHERE LOWER(phenotype) = LOWER('@phenotype');
+    WHERE LOWER(phenotype) = LOWER(@phenotype);
   "
   keeperReference <- DatabaseConnector::renderTranslateQuerySql(
     connection = connectionPool,
     sql = sql,
     database_schema = referenceCohortDatabaseSchema,
     table = Keeper::createReferenceCohortTableNames(referenceCohortTable)$referenceCohortMetadataTable,
-    phenotype = phenotype,
+    phenotype = quoteSqlString(phenotype),
     snakeCaseToCamelCase = TRUE
   )
   if (nrow(keeperReference) == 0) {
@@ -365,7 +365,7 @@ listConceptSets <- function(phenotype) {
     INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
       ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
         AND phenotype_to_concept_set.hypernym = concept_set_expression.hypernym
-    WHERE LOWER(phenotype) = LOWER('@phenotype');
+    WHERE LOWER(phenotype) = LOWER(@phenotype);
   "
   conceptSets <- DatabaseConnector::renderTranslateQuerySql(
     connection = connectionPool,
@@ -373,7 +373,7 @@ listConceptSets <- function(phenotype) {
     database_schema = conceptSetDatabaseSchema,
     phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
     concept_set_expression_plus_table = conceptSetExpressionsPlusTable,
-    phenotype = phenotype,
+    phenotype = quoteSqlString(phenotype),
     snakeCaseToCamelCase = TRUE
   )
   
@@ -404,8 +404,8 @@ getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_co
     INNER JOIN @database_schema.@phenotype_to_concept_set_table phenotype_to_concept_set
       ON phenotype_to_concept_set.concept_set_name = concept_set_expression.concept_set_name
         AND phenotype_to_concept_set.hypernym = concept_set_expression.hypernym
-    WHERE LOWER(phenotype) = '@phenotype'
-      AND LOWER(concept_set_expression.concept_set_name) IN ('@concept_set_names');
+    WHERE LOWER(phenotype) = LOWER(@phenotype)
+      AND LOWER(concept_set_expression.concept_set_name) IN (@concept_set_names);
   "
   conceptSets <- DatabaseConnector::renderTranslateQuerySql(
     connection = connectionPool,
@@ -413,8 +413,8 @@ getConceptSetsCapr <- function(phenotype, conceptSetNames, detail = "code_and_co
     database_schema = conceptSetDatabaseSchema,
     phenotype_to_concept_set_table = phenotypeToConceptSetNameTable,
     concept_set_expression_plus_table = conceptSetExpressionsPlusTable,
-    phenotype = tolower(phenotype),
-    concept_set_names = paste(tolower(gsub("'", "''", conceptSetNames)), collapse = "', '"),
+    phenotype = quoteSqlString(phenotype),
+    concept_set_names = paste(tolower(quoteSqlString(conceptSetNames)), collapse = ", "),
     snakeCaseToCamelCase = TRUE
   )
   caprWithReference <- conceptSets |>

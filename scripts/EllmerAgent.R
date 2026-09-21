@@ -62,40 +62,44 @@ constructContext <- function(phenotype, clinicalDefinition) {
 
 # Run chat -------------------------------------------------------------------------------------------------------------
 
-phenotype <- phenotypes[1]
-
-outputFolder <- file.path("runs", sprintf("ellmer_%s", gsub("[^[:alnum:]]+", "_", phenotype)))
-dir.create(outputFolder)
-
-clinicalDefinition <- definitions |>
-  filter(Phenotype == phenotype) |>
-  pull(Definition)
-context <- constructContext(phenotype, clinicalDefinition)
-
-# Run chat
-chat$set_turns(list())
-chat$set_system_prompt(systemPrompt)
-response <- chat$chat(context)
-
-# Save full chat
-turns <- chat$get_turns()
-texts <- list()  
-for (t in 2:length(turns)) {
-  texts[[t-1]] <- format(turns[[t]])
+for (i in seq_along(phenotypes)) {
+  phenotype <- phenotypes[i]
+  outputFolder <- file.path("runs", sprintf("ellmer_%s", gsub("[^[:alnum:]]+", "_", phenotype)))
+  if (!dir.exists(outputFolder)) {
+    message("Creating cohort defintion for ", phenotype)
+    dir.create(outputFolder)
+    
+    clinicalDefinition <- definitions |>
+      filter(Phenotype == phenotype) |>
+      pull(Definition)
+    context <- constructContext(phenotype, clinicalDefinition)
+    
+    # Run chat
+    chat$set_turns(list())
+    chat$set_system_prompt(systemPrompt)
+    response <- chat$chat(context)
+    
+    # Save full chat
+    turns <- chat$get_turns()
+    texts <- list()  
+    for (t in 2:length(turns)) {
+      texts[[t-1]] <- format(turns[[t]])
+    }
+    texts <- paste(texts, collapse = "\n\n")
+    writeLines(texts, file.path(outputFolder, "chat.txt"))
+    
+    # Get best cohort definition
+    prompt <- "
+      Please return your best definition capr code.
+      Output using the following structure. Do not include text outside the JSON:
+      { \"capr\": \"cohort(...)\"}
+    "
+    bestCohortDefinition <- chat$chat_structured(prompt, type = type_object(capr = type_string()))
+    json <- convertCaprToJson(bestCohortDefinition$capr)
+    writeLines(json, file.path(outputFolder, "best_cohort.json"))
+    
+    # Save cost
+    cost <- chat$get_cost("all")
+    writeLines(sprintf("Total cost: $%0.2f", cost), file.path(outputFolder, "cost.txt"))
+  }
 }
-texts <- paste(texts, collapse = "\n\n")
-writeLines(texts, file.path(outputFolder, "chat.txt"))
-
-# Get best cohort definition
-prompt <- "
-Please return your best definition capr code.
-Output using the following structure. Do not include text outside the JSON:
-{ \"capr\": \"cohort(...)\"}
-"
-bestCohortDefinition <- chat$chat_structured(prompt, type = type_object(capr = type_string()))
-json <- convertCaprToJson(bestCohortDefinition$capr)
-writeLines(json, file.path(outputFolder, "best_cohort.json"))
-
-# Save cost
-cost <- chat$get_cost("all")
-writeLines(sprintf("Total cost: $%0.2f", cost), file.path(outputFolder, "cost.txt"))
