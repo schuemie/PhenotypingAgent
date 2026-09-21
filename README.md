@@ -36,11 +36,17 @@ in code. Artifacts land in `runs/<run-id>/`.
 python -m pip install -e .[dev]
 python -m phenotyping_agent.cli list-tools --live
 python -m phenotyping_agent.cli run --clinical-definition "acute liver failure.txt" --dry-run
+python -m phenotyping_agent.cli run --phenotypes-csv phenotypes.csv --dry-run
 python -m pytest -q
 ```
 
 `--dry-run` is hermetic: it uses fixture-backed fake MCP responses *and* deterministic stand-ins
 for every LLM node, so the full flow runs with no database, MCP or model connectivity.
+
+When you pass `--phenotypes-csv`, the CLI reads each row sequentially and launches a separate run
+for every phenotype in the file. Each run gets its own `runs/langgraph__<phenotype>/` folder, with
+the phenotype name normalized to alphanumerics and underscores, and the CSV definition text is
+written into that run directory before execution.
 
 ## Running with real models
 
@@ -48,6 +54,12 @@ Configure both model tiers, then run without `--dry-run`:
 
 ```powershell
 python -m phenotyping_agent.cli run --phenotype "Acute liver failure" --clinical-definition "acute liver failure.txt"
+```
+
+Alternatively, you can run with a CSV of phenotypes:
+
+```powershell
+python -m phenotyping_agent.cli run --phenotypes-csv phenotypes.csv
 ```
 
 Tiers can also come from `REASONING_TIER_PROVIDER` / `REASONING_TIER_MODEL` /
