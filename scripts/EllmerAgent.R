@@ -130,15 +130,55 @@ for (i in seq_along(phenotypes)) {
     # postDefinition() somehow corrupts column names, so fix them:
     colnames(metaData)[1:2] <- c("id", "name")
   }
-
   cohortReference[[i]] <- metaData |>
     select("id", "name") |>
     mutate(phenotype = !!phenotype)
+  
+  # Copy reasoning:
+  reasoning <- readLines(file.path("runs", sprintf("ellmer_%s", gsub("[^[:alnum:]]+", "_", phenotype)), "chat.txt"))
+  writeLines(reasoning, file.path("..", "largescalephentest", "AgentReasoning", "MonoFlow", paste0(gsub("[^[:alnum:]]+", "_", phenotype), ".txt")))
 }
 cohortReference <- bind_rows(cohortReference) |>
   rename(cohortId = "id", cohortName = "name")
-readr::write_csv(cohortReference, "CohortReferenceMonoFlow.csv")
+readr::write_csv(cohortReference, "../largescalephentest/CohortReferenceMonoFlow.csv")
 
+# Also collect the phenotypes of the LangGraph workflow and push to WebApi ---------------------------------------------
+baseUrl <- "https://epi.jnj.com:8443/WebAPI"
+ROhdsiWebApi::authorizeWebApi(baseUrl, authMethod = "windows")
+existingCohorts <- ROhdsiWebApi::getDefinitionsMetadata(baseUrl, "cohort")
+
+cohortReference <- list()
+for (i in seq_along(phenotypes)) {
+  phenotype <- phenotypes[i]
+  cohortName <- sprintf("[mschuemi] %s (AI-generated LangGraph Opus 4.8)", phenotype)  
+  metaData <- existingCohorts |>
+    filter(name == cohortName)
+  if (nrow(metaData) == 0) {
+    message("Uploading definition for ", phenotype)
+    outputFolder <- file.path("runs", sprintf("langgraph__%s", gsub("[^[:alnum:]]+", "_", phenotype)))
+    json <- paste(readLines(file.path(outputFolder, "final_cohort.json")))
+    cohortDefinition = jsonlite::fromJSON(json, simplifyVector = FALSE)
+    metaData <- ROhdsiWebApi::postDefinition(
+      name = cohortName,
+      category = "cohort",
+      definition = cohortDefinition,
+      baseUrl = baseUrl
+    )
+    # postDefinition() somehow corrupts column names, so fix them:
+    colnames(metaData)[1:2] <- c("id", "name")
+  }
+  
+  cohortReference[[i]] <- metaData |>
+    select("id", "name") |>
+    mutate(phenotype = !!phenotype)
+  
+  # Copy reasoning:
+  reasoning <- readLines(file.path("runs", sprintf("langgraph__%s", gsub("[^[:alnum:]]+", "_", phenotype)), "report.md"))
+  writeLines(reasoning, file.path("..", "largescalephentest", "AgentReasoning", "LangGraph", paste0(gsub("[^[:alnum:]]+", "_", phenotype), ".md")))
+}
+cohortReference <- bind_rows(cohortReference) |>
+  rename(cohortId = "id", cohortName = "name")
+readr::write_csv(cohortReference, "../largescalephentest/CohortReferenceLangGraph.csv")
 
 
 

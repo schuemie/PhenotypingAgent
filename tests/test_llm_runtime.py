@@ -80,6 +80,52 @@ def test_structured_retries_and_repairs_after_validation_error() -> None:
     assert "_Answer" in repair_prompt and "missing value" in repair_prompt
 
 
+def test_structured_recovers_from_fenced_json_without_retry() -> None:
+    runtime, client = _runtime(
+        [
+            {
+                "raw": AIMessage(content='```json\n{"value": 9}\n```'),
+                "parsed": None,
+                "parsing_error": "json fence wrapper",
+            }
+        ],
+        "test_runtime_fenced_json",
+    )
+
+    result = runtime.structured(
+        tier=TIER,
+        node="unit",
+        messages=[HumanMessage(content="go")],
+        schema=_Answer,
+    )
+
+    assert result == _Answer(value=9)
+    assert len(client.runnable.calls) == 1
+
+
+def test_structured_recovers_from_prefixed_json_without_retry() -> None:
+    runtime, client = _runtime(
+        [
+            {
+                "raw": AIMessage(content='Here is the corrected JSON:\n{"value": 13}'),
+                "parsed": None,
+                "parsing_error": "leading prose",
+            }
+        ],
+        "test_runtime_prefixed_json",
+    )
+
+    result = runtime.structured(
+        tier=TIER,
+        node="unit",
+        messages=[HumanMessage(content="go")],
+        schema=_Answer,
+    )
+
+    assert result == _Answer(value=13)
+    assert len(client.runnable.calls) == 1
+
+
 def test_structured_retries_after_hard_validation_exception() -> None:
     runtime = LLMRuntime(make_config("test_runtime_hard_validation_retry"))
     client = _FakeClient([])

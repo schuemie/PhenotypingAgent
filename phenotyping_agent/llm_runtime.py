@@ -14,6 +14,7 @@ leaving node code identical in both modes.
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any, Callable, Sequence
@@ -25,6 +26,7 @@ from pydantic import BaseModel
 from phenotyping_agent.config import AppConfig, ModelTier
 from phenotyping_agent.llm_events import LLMEventLogger, extract_text, extract_usage
 from phenotyping_agent.llm_client import get_llm_client
+from phenotyping_agent.parsing import strip_code_fences
 
 PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
@@ -39,6 +41,35 @@ def load_prompt(name: str) -> str:
 
 class StubbedTierError(RuntimeError):
     """Raised when a stubbed tier is used without a stub factory."""
+
+
+def _coerce_ai_message(payload: Any) -> AIMessage:
+    text = strip_code_fences(extract_text(payload))
+    return AIMessage(content=text or extract_text(payload))
+
+
+def _recover_structured_output(raw: Any, schema: type[BaseModel]) -> BaseModel | None:
+    text = strip_code_fences(extract_text(raw))
+    if not text:
+        return None
+    try:
+        return schema.model_validate_json(text)
+    except Exception:
+        pass
+
+    decoder = json.JSONDecoder()
+    for index, char in enumerate(text):
+        if char not in "[{":
+            continue
+        try:
+            payload, _ = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        try:
+            return schema.model_validate(payload)
+        except Exception:
+            continue
+    return None
 
 
 class LLMRuntime:
@@ -234,11 +265,14 @@ class LLMRuntime:
             error = result.get("parsing_error") if isinstance(result, dict) else None
             if isinstance(parsed, schema) and error is None:
                 return parsed
-            last_error = str(error or "model returned no parseable structured output")
             raw = result.get("raw") if isinstance(result, dict) else None
+            recovered = _recover_structured_output(raw, schema)
+            if isinstance(recovered, schema):
+                return recovered
+            last_error = str(error or "model returned no parseable structured output")
             turns = [
                 *turns,
-                raw if isinstance(raw, AIMessage) else AIMessage(content=extract_text(raw)),
+                _coerce_ai_message(raw),
                 HumanMessage(
                     content=(
                         "Your previous response did not satisfy the required schema "
