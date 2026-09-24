@@ -64,7 +64,7 @@ constructContext <- function(phenotype, clinicalDefinition) {
 
 for (i in seq_along(phenotypes)) {
   phenotype <- phenotypes[i]
-  outputFolder <- file.path("runs", sprintf("ellmer_%s", gsub("[^[:alnum:]]+", "_", phenotype)))
+  outputFolder <- file.path("runs", sprintf("ellmer_no365_%s", gsub("[^[:alnum:]]+", "_", phenotype)))
   if (!dir.exists(outputFolder)) {
     message("Creating cohort defintion for ", phenotype)
     dir.create(outputFolder)

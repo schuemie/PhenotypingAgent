@@ -59,6 +59,9 @@ Think about how the phenotype plays out in a real-world healthcare setting:
 * **EHR vs. Claims:** How does the data capture differ? (e.g., Claims will have precise billing diagnoses but may lack lab results; EHRs will have rich clinical measurements but may have missing data if the patient went out of network). Build logic that bridges these gaps.
 * **Patient Journey:** What interactions would the patient have with the healthcare system before, during, and after onset? 
 * **Operational Accuracy:** What operational definition would accurately reflect the phenotype as described in the Clinical Definition? Leverage Capr's structure to balance logic. 
+* **Only necessary constraints:** Only include criteria - especially prior/post-observation windows, washout periods, or age/enrollment - that are grounded in the clinical definition or user request.
+
+filters 
 
 ## Capr Rules
 1. **Use only functions and arguments documented in `CAPR_REFERENCE.md`.** If something seems missing, say so — do not improvise API.

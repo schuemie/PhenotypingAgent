@@ -105,7 +105,7 @@ library(Capr)
 cd <- cohort(
   entry = entry(
     conditionOccurrence(cs_t2dm, firstOccurrence()), # incident 
-    observationWindow = continuousObservation(365L, 0L),
+    observationWindow = continuousObservation(0L, 0L),
     primaryCriteriaLimit = "First"
   ),
   attrition = attrition(
