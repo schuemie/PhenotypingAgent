@@ -66,19 +66,14 @@ phenotypeToConceptSetNameTable <- "phenotype_to_concept_set"
 options(sqlRenderTempEmulationSchema = "scratch.scratch_mschuemi")
 
 # For running Phenelope:
-llmClientO3 <- ellmer::chat_azure_openai(
+llmClient <- ellmer::chat_azure_openai(
   endpoint = keyring::key_get("genai_openai_endpoint"),
   api_version = "2024-12-01-preview",
   model = "o3",
   credentials = function() keyring::key_get("genai_api_gpt4_key")
 )
-llmClient4o <- ellmer::chat_azure_openai(
-  endpoint = keyring::key_get("genai_openai_endpoint"),
-  api_version = "2023-03-15-preview",
-  model = "gpt-4o",
-  credentials = function() keyring::key_get("genai_api_gpt4_key")
-)
 newConceptSetsFolder <- "newConceptSets"
+dir.create(newConceptSetsFolder, showWarnings = FALSE)
 
 # Support functions and global variables -------------------------------------------------------------------------------
 connectionPool <- pool::poolCreate(
@@ -1171,7 +1166,7 @@ createNewConceptSet <- function(name, description) {
     clinicalDefinition = description,
     connectionDetails = connectionDetails,
     vocabDatabaseSchema = cdmDatabaseSchema,
-    llmClient = llmClientO3
+    llmClient = llmClient
   )
   sql <- CirceR::buildConceptSetQuery(json)
   counts <- getCounts(sql, connectionPool, cdmDatabaseSchema)
@@ -1385,8 +1380,8 @@ if (getOption("RUN_SERVER", default = TRUE)) {
       convertCaprToJsonTool,
       generateCohortTool,
       evaluateCohortTool,
-      samplePatientProfileTool
-      #createNewConceptSetTool
+      samplePatientProfileTool,
+      createNewConceptSetTool
     ),
     session_tools = FALSE
   )

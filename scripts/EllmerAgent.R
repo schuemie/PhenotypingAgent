@@ -15,6 +15,8 @@ chat <- Helios::chat_jnj_bedrock(
   echo = "none"
 )
 
+runFolderPrefix <- "ellmer_create_cs_"
+
 phenotypes <- readLines("../largescalephentest/SelectedPhenotypes.txt")
 definitions <- openxlsx::readWorkbook("../largescalephentest/ClinicalDefinitionLibrary564.xlsx")
 
@@ -64,7 +66,7 @@ constructContext <- function(phenotype, clinicalDefinition) {
 
 for (i in seq_along(phenotypes)) {
   phenotype <- phenotypes[i]
-  outputFolder <- file.path("runs", sprintf("ellmer_%s", gsub("[^[:alnum:]]+", "_", phenotype)))
+  outputFolder <- file.path("runs", paste0(runFolderPrefix, gsub("[^[:alnum:]]+", "_", phenotype)))
   if (!dir.exists(outputFolder)) {
     message("Creating cohort defintion for ", phenotype)
     dir.create(outputFolder)
